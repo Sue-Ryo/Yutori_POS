@@ -22,6 +22,14 @@ import {
   coupons as initialCoupons,
   getBusinessDate,
 } from "@/lib/pos-store"
+import {
+  STORAGE_KEYS,
+  loadList,
+  saveList,
+  loadObject,
+  saveObject,
+  revivers,
+} from "@/lib/pos-storage"
 import { fetchProducts, createProduct, updateProduct, deleteProduct } from "@/lib/api/products"
 import { FloorMap } from "./floor-map"
 import { OrderSidebar } from "./order-sidebar"
@@ -37,13 +45,25 @@ type Tab = "map" | "editor" | "report"
 
 export function POSSystem() {
   const [activeTab, setActiveTab] = useState<Tab>("map")
-  const [blocks, setBlocks] = useState<ServiceBlock[]>(initialBlocks)
-  const [layoutElements, setLayoutElements] = useState<LayoutElement[]>(initialLayoutElements)
-  const [sessions, setSessions] = useState<BlockSession[]>(initialSessions)
-  const [payments, setPayments] = useState<Payment[]>(initialPayments)
-  const [settings, setSettings] = useState<BusinessSettings>(initialSettings)
+  const [blocks, setBlocks] = useState<ServiceBlock[]>(
+    () => loadList(STORAGE_KEYS.blocks, revivers.reviveBlock) ?? initialBlocks
+  )
+  const [layoutElements, setLayoutElements] = useState<LayoutElement[]>(
+    () => loadList(STORAGE_KEYS.layoutElements, (r) => r as unknown as LayoutElement) ?? initialLayoutElements
+  )
+  const [sessions, setSessions] = useState<BlockSession[]>(
+    () => loadList(STORAGE_KEYS.sessions, revivers.reviveSession) ?? initialSessions
+  )
+  const [payments, setPayments] = useState<Payment[]>(
+    () => loadList(STORAGE_KEYS.payments, revivers.revivePayment) ?? initialPayments
+  )
+  const [settings, setSettings] = useState<BusinessSettings>(
+    () => loadObject<BusinessSettings>(STORAGE_KEYS.settings) ?? initialSettings
+  )
   const [products, setProducts] = useState<Product[]>(initialProducts)
-  const [coupons, setCoupons] = useState<Coupon[]>(initialCoupons)
+  const [coupons, setCoupons] = useState<Coupon[]>(
+    () => loadList(STORAGE_KEYS.coupons, (r) => r as unknown as Coupon) ?? initialCoupons
+  )
   const [dbLoading, setDbLoading] = useState(false)
   const [dbError, setDbError] = useState<string | null>(null)
 
@@ -66,6 +86,14 @@ export function POSSystem() {
     loadProductsFromDB()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 状態変化時に localStorage へ保存
+  useEffect(() => { saveList(STORAGE_KEYS.blocks, blocks) }, [blocks])
+  useEffect(() => { saveList(STORAGE_KEYS.layoutElements, layoutElements) }, [layoutElements])
+  useEffect(() => { saveList(STORAGE_KEYS.sessions, sessions) }, [sessions])
+  useEffect(() => { saveList(STORAGE_KEYS.payments, payments) }, [payments])
+  useEffect(() => { saveObject(STORAGE_KEYS.settings, settings) }, [settings])
+  useEffect(() => { saveList(STORAGE_KEYS.coupons, coupons) }, [coupons])
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)

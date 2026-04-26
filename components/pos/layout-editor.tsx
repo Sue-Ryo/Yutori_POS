@@ -110,6 +110,7 @@ export function LayoutEditor({
   const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null)
   const [dragState, setDragState] = useState<DragState | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
+  const dragStateRef = useRef<DragState | null>(null)
 
   // Delete / Escape キー
   useEffect(() => {
@@ -125,6 +126,17 @@ export function LayoutEditor({
     return () => window.removeEventListener("keydown", onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItem])
+
+  // ドラッグ中のスクロール抑制（React の passive touchmove では preventDefault が効かないため直接登録）
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const onTouchMove = (e: TouchEvent) => {
+      if (dragStateRef.current) e.preventDefault()
+    }
+    canvas.addEventListener("touchmove", onTouchMove, { passive: false })
+    return () => canvas.removeEventListener("touchmove", onTouchMove)
+  }, [])
 
   const getCanvasPos = (clientX: number, clientY: number) => {
     const rect = canvasRef.current?.getBoundingClientRect()
@@ -151,8 +163,7 @@ export function LayoutEditor({
     const geo = getItemGeo(item)
     if (!geo) return
     const { x: canvasX, y: canvasY } = getCanvasPos(clientX, clientY)
-    setSelectedItem(item)
-    setDragState({
+    const newState: DragState = {
       mode,
       handle,
       startCanvasX: canvasX,
@@ -161,7 +172,10 @@ export function LayoutEditor({
       startY: geo.y,
       startW: geo.w,
       startH: geo.h,
-    })
+    }
+    dragStateRef.current = newState
+    setSelectedItem(item)
+    setDragState(newState)
   }
 
   const moveDrag = (clientX: number, clientY: number) => {
@@ -189,7 +203,10 @@ export function LayoutEditor({
     }
   }
 
-  const endDrag = () => setDragState(null)
+  const endDrag = () => {
+    dragStateRef.current = null
+    setDragState(null)
+  }
 
   const handleAddBlock = (blockType: BlockType) => {
     const isWide = blockType === "sofa" || blockType === "private_room"

@@ -552,7 +552,7 @@ export function OrderSidebar({
             <option value="">クーポンなし</option>
             {coupons.filter((c) => c.isActive).map((c) => (
               <option key={c.id} value={c.id}>
-                {c.name}
+                {c.name}（{c.discountType === "amount" ? `−¥${c.discountValue.toLocaleString()}` : `−${c.discountValue}%`}）
               </option>
             ))}
           </select>
