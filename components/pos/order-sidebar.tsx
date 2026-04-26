@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import type {
   ServiceBlock,
@@ -31,6 +31,7 @@ import {
   Timer,
   Users,
   Link2,
+  FileText,
 } from "lucide-react"
 
 interface OrderSidebarProps {
@@ -68,6 +69,11 @@ export function OrderSidebar({
   const [cashReceived, setCashReceived] = useState<string>("")
   const [guestCount, setGuestCount] = useState<number>(session?.guestCount ?? 1)
   const [editingMemoId, setEditingMemoId] = useState<string | null>(null)
+  const [noteText, setNoteText] = useState<string>(session?.note ?? "")
+
+  useEffect(() => {
+    setNoteText(session?.note ?? "")
+  }, [session?.id])
 
   const toggleCategory = (catId: string) => {
     setOpenCategoryIds((prev) => {
@@ -127,6 +133,7 @@ export function OrderSidebar({
       orderItems: [],
       startedAt: new Date(),
       guestCount: guestCount,
+      note: noteText || undefined,
     }
   }
 
@@ -281,6 +288,19 @@ export function OrderSidebar({
               />
               <span>名</span>
             </div>
+          </div>
+          <div className="mt-1.5 flex items-center gap-1.5">
+            <FileText className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
+            <input
+              type="text"
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              onBlur={() => {
+                if (session) onUpdateSession({ ...session, note: noteText || undefined })
+              }}
+              placeholder="備考を追加..."
+              className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/50 outline-none"
+            />
           </div>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose}>

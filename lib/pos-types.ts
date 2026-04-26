@@ -60,6 +60,7 @@ export interface BlockSession {
   startedAt: Date
   endedAt?: Date
   guestCount: number
+  note?: string
 }
 
 export interface CheckoutData {

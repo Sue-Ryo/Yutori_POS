@@ -20,6 +20,8 @@ import {
 } from "lucide-react"
 
 const GRID = 10
+const MIN_W = 40
+const MIN_H = 15
 
 function snap(v: number) {
   return Math.round(v / GRID) * GRID
@@ -44,6 +46,59 @@ interface LayoutEditorProps {
 }
 
 type SelectedItem = { id: string; kind: "block" | "element" }
+type ResizeHandle = "n" | "ne" | "e" | "se" | "s" | "sw" | "w" | "nw"
+
+interface DragState {
+  mode: "move" | "resize"
+  handle?: ResizeHandle
+  startCanvasX: number
+  startCanvasY: number
+  startX: number
+  startY: number
+  startW: number
+  startH: number
+}
+
+const HANDLE_CURSORS: Record<ResizeHandle, string> = {
+  n: "n-resize", ne: "ne-resize", e: "e-resize", se: "se-resize",
+  s: "s-resize", sw: "sw-resize", w: "w-resize", nw: "nw-resize",
+}
+
+const ALL_HANDLES: ResizeHandle[] = ["n", "ne", "e", "se", "s", "sw", "w", "nw"]
+
+function getHandlePos(
+  handle: ResizeHandle,
+  x: number, y: number, w: number, h: number,
+) {
+  return {
+    hx: handle.includes("e") ? x + w : handle.includes("w") ? x : x + w / 2,
+    hy: handle.includes("s") ? y + h : handle.includes("n") ? y : y + h / 2,
+  }
+}
+
+function applyResize(
+  handle: ResizeHandle,
+  s: DragState,
+  dx: number,
+  dy: number,
+): { x: number; y: number; width: number; height: number } {
+  let x = s.startX, y = s.startY, w = s.startW, h = s.startH
+
+  if (handle.includes("e")) w = Math.max(MIN_W, snap(s.startW + dx))
+  if (handle.includes("s")) h = Math.max(MIN_H, snap(s.startH + dy))
+  if (handle.includes("w")) {
+    const newW = Math.max(MIN_W, snap(s.startW - dx))
+    x = s.startX + (s.startW - newW)
+    w = newW
+  }
+  if (handle.includes("n")) {
+    const newH = Math.max(MIN_H, snap(s.startH - dy))
+    y = s.startY + (s.startH - newH)
+    h = newH
+  }
+
+  return { x, y, width: w, height: h }
+}
 
 export function LayoutEditor({
   blocks: initialBlocks,
@@ -53,8 +108,7 @@ export function LayoutEditor({
   const [blocks, setBlocks] = useState<ServiceBlock[]>(initialBlocks)
   const [elements, setElements] = useState<LayoutElement[]>(initialElements)
   const [selectedItem, setSelectedItem] = useState<SelectedItem | null>(null)
-  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
-  const [isDragging, setIsDragging] = useState(false)
+  const [dragState, setDragState] = useState<DragState | null>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
 
   // Delete / Escape キー
@@ -71,6 +125,71 @@ export function LayoutEditor({
     return () => window.removeEventListener("keydown", onKeyDown)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItem])
+
+  const getCanvasPos = (clientX: number, clientY: number) => {
+    const rect = canvasRef.current?.getBoundingClientRect()
+    if (!rect) return { x: 0, y: 0 }
+    return { x: clientX - rect.left, y: clientY - rect.top }
+  }
+
+  const getItemGeo = (item: SelectedItem) => {
+    if (item.kind === "block") {
+      const b = blocks.find((b) => b.id === item.id)
+      return b ? { x: b.x, y: b.y, w: b.width, h: b.height } : null
+    }
+    const el = elements.find((el) => el.id === item.id)
+    return el ? { x: el.x, y: el.y, w: el.width, h: el.height } : null
+  }
+
+  const beginDrag = (
+    clientX: number,
+    clientY: number,
+    item: SelectedItem,
+    mode: "move" | "resize",
+    handle?: ResizeHandle,
+  ) => {
+    const geo = getItemGeo(item)
+    if (!geo) return
+    const { x: canvasX, y: canvasY } = getCanvasPos(clientX, clientY)
+    setSelectedItem(item)
+    setDragState({
+      mode,
+      handle,
+      startCanvasX: canvasX,
+      startCanvasY: canvasY,
+      startX: geo.x,
+      startY: geo.y,
+      startW: geo.w,
+      startH: geo.h,
+    })
+  }
+
+  const moveDrag = (clientX: number, clientY: number) => {
+    if (!dragState || !selectedItem) return
+    const { x: canvasX, y: canvasY } = getCanvasPos(clientX, clientY)
+    const dx = canvasX - dragState.startCanvasX
+    const dy = canvasY - dragState.startCanvasY
+
+    const updates =
+      dragState.mode === "move"
+        ? {
+            x: snap(Math.max(0, dragState.startX + dx)),
+            y: snap(Math.max(0, dragState.startY + dy)),
+          }
+        : applyResize(dragState.handle!, dragState, dx, dy)
+
+    if (selectedItem.kind === "block") {
+      setBlocks((prev) =>
+        prev.map((b) => (b.id === selectedItem.id ? { ...b, ...updates } : b))
+      )
+    } else {
+      setElements((prev) =>
+        prev.map((el) => (el.id === selectedItem.id ? { ...el, ...updates } : el))
+      )
+    }
+  }
+
+  const endDrag = () => setDragState(null)
 
   const handleAddBlock = (blockType: BlockType) => {
     const isWide = blockType === "sofa" || blockType === "private_room"
@@ -105,46 +224,6 @@ export function LayoutEditor({
     setSelectedItem({ id: newEl.id, kind: "element" })
   }
 
-  const handleMouseDown = (
-    e: React.MouseEvent,
-    item: SelectedItem,
-    itemX: number,
-    itemY: number,
-  ) => {
-    e.stopPropagation()
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
-    setDragOffset({
-      x: e.clientX - rect.left - itemX,
-      y: e.clientY - rect.top - itemY,
-    })
-    setSelectedItem(item)
-    setIsDragging(true)
-    e.preventDefault()
-  }
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || !selectedItem) return
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const rect = canvas.getBoundingClientRect()
-    const newX = snap(Math.max(0, e.clientX - rect.left - dragOffset.x))
-    const newY = snap(Math.max(0, e.clientY - rect.top - dragOffset.y))
-
-    if (selectedItem.kind === "block") {
-      setBlocks((prev) =>
-        prev.map((b) => (b.id === selectedItem.id ? { ...b, x: newX, y: newY } : b))
-      )
-    } else {
-      setElements((prev) =>
-        prev.map((el) => (el.id === selectedItem.id ? { ...el, x: newX, y: newY } : el))
-      )
-    }
-  }
-
-  const handleMouseUp = () => setIsDragging(false)
-
   const handleRotate = () => {
     if (!selectedItem) return
     if (selectedItem.kind === "block") {
@@ -157,23 +236,6 @@ export function LayoutEditor({
       setElements((prev) =>
         prev.map((el) =>
           el.id === selectedItem.id ? { ...el, rotation: (el.rotation + 90) % 360 } : el
-        )
-      )
-    }
-  }
-
-  const handleResize = (dim: "width" | "height", delta: number) => {
-    if (!selectedItem) return
-    if (selectedItem.kind === "block") {
-      setBlocks((prev) =>
-        prev.map((b) =>
-          b.id === selectedItem.id ? { ...b, [dim]: Math.max(40, b[dim] + delta) } : b
-        )
-      )
-    } else {
-      setElements((prev) =>
-        prev.map((el) =>
-          el.id === selectedItem.id ? { ...el, [dim]: Math.max(15, el[dim] + delta) } : el
         )
       )
     }
@@ -199,6 +261,14 @@ export function LayoutEditor({
     ? elements.find((el) => el.id === selectedItem.id)
     : null
 
+  const selectedGeo = selectedItem ? getItemGeo(selectedItem) : null
+
+  const canvasCursor = dragState
+    ? dragState.mode === "move"
+      ? "cursor-grabbing"
+      : `cursor-${dragState.handle}-resize`
+    : "cursor-default"
+
   return (
     <div className="flex h-full gap-4">
       {/* Canvas */}
@@ -206,12 +276,18 @@ export function LayoutEditor({
         ref={canvasRef}
         className={cn(
           "relative flex-1 overflow-auto rounded-lg border border-border bg-card",
-          isDragging ? "cursor-grabbing" : "cursor-default",
+          canvasCursor,
         )}
         style={{ minHeight: 500 }}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onMouseMove={(e) => moveDrag(e.clientX, e.clientY)}
+        onMouseUp={endDrag}
+        onMouseLeave={endDrag}
+        onTouchMove={(e) => {
+          if (!dragState) return
+          e.preventDefault()
+          moveDrag(e.touches[0].clientX, e.touches[0].clientY)
+        }}
+        onTouchEnd={endDrag}
         onClick={() => setSelectedItem(null)}
       >
         {/* Grid */}
@@ -246,7 +322,15 @@ export function LayoutEditor({
               height: el.height,
               transform: `rotate(${el.rotation}deg)`,
             }}
-            onMouseDown={(e) => handleMouseDown(e, { id: el.id, kind: "element" }, el.x, el.y)}
+            onMouseDown={(e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              beginDrag(e.clientX, e.clientY, { id: el.id, kind: "element" }, "move")
+            }}
+            onTouchStart={(e) => {
+              e.stopPropagation()
+              beginDrag(e.touches[0].clientX, e.touches[0].clientY, { id: el.id, kind: "element" }, "move")
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <GripVertical className="absolute left-0.5 h-3 w-3 opacity-30" />
@@ -271,9 +355,15 @@ export function LayoutEditor({
               height: block.height,
               transform: `rotate(${block.rotation}deg)`,
             }}
-            onMouseDown={(e) =>
-              handleMouseDown(e, { id: block.id, kind: "block" }, block.x, block.y)
-            }
+            onMouseDown={(e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              beginDrag(e.clientX, e.clientY, { id: block.id, kind: "block" }, "move")
+            }}
+            onTouchStart={(e) => {
+              e.stopPropagation()
+              beginDrag(e.touches[0].clientX, e.touches[0].clientY, { id: block.id, kind: "block" }, "move")
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <span className="px-1 text-center text-xs font-bold leading-tight">
@@ -285,6 +375,37 @@ export function LayoutEditor({
             )}
           </div>
         ))}
+
+        {/* リサイズハンドル */}
+        {selectedGeo && ALL_HANDLES.map((handle) => {
+          const { hx, hy } = getHandlePos(handle, selectedGeo.x, selectedGeo.y, selectedGeo.w, selectedGeo.h)
+          return (
+            <div
+              key={handle}
+              className="absolute z-20 flex items-center justify-center"
+              style={{
+                left: hx - 14,
+                top: hy - 14,
+                width: 28,
+                height: 28,
+                cursor: HANDLE_CURSORS[handle],
+                touchAction: "none",
+              }}
+              onMouseDown={(e) => {
+                e.stopPropagation()
+                e.preventDefault()
+                beginDrag(e.clientX, e.clientY, selectedItem!, "resize", handle)
+              }}
+              onTouchStart={(e) => {
+                e.stopPropagation()
+                beginDrag(e.touches[0].clientX, e.touches[0].clientY, selectedItem!, "resize", handle)
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="h-3 w-3 rounded-sm border-2 border-primary bg-background shadow-md" />
+            </div>
+          )
+        })}
       </div>
 
       {/* Toolbox */}
@@ -427,34 +548,6 @@ export function LayoutEditor({
                 </div>
               )}
 
-              {/* サイズ */}
-              <div>
-                <Label className="text-xs text-muted-foreground">サイズ調整</Label>
-                <div className="mt-1 grid grid-cols-2 gap-1">
-                  {(
-                    [
-                      ["幅＋", "width", 10],
-                      ["幅－", "width", -10],
-                      ["高＋", "height", 10],
-                      ["高－", "height", -10],
-                    ] as const
-                  ).map(([label, dim, delta]) => (
-                    <Button
-                      key={label}
-                      variant="outline"
-                      size="sm"
-                      className="text-xs"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleResize(dim, delta)
-                      }}
-                    >
-                      {label}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-
               <div className="flex gap-2">
                 <Button
                   variant="outline"
@@ -480,15 +573,15 @@ export function LayoutEditor({
                 </Button>
               </div>
               <p className="text-[10px] text-muted-foreground">
-                Delete キーで削除 / Esc で選択解除
+                ハンドルをドラッグでサイズ変更
               </p>
             </CardContent>
           </Card>
         ) : (
           <p className="px-2 text-center text-xs text-muted-foreground">
-            要素をクリックして選択
+            要素をタップして選択
             <br />
-            ドラッグで移動（10px スナップ）
+            ドラッグで移動・ハンドルでリサイズ
           </p>
         )}
 
