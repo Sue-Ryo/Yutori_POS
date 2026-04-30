@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
+import { useState, useCallback, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 import type {
   ServiceBlock,
@@ -45,25 +45,15 @@ type Tab = "map" | "editor" | "report"
 
 export function POSSystem() {
   const [activeTab, setActiveTab] = useState<Tab>("map")
-  const [blocks, setBlocks] = useState<ServiceBlock[]>(
-    () => loadList(STORAGE_KEYS.blocks, revivers.reviveBlock) ?? initialBlocks
-  )
-  const [layoutElements, setLayoutElements] = useState<LayoutElement[]>(
-    () => loadList(STORAGE_KEYS.layoutElements, (r) => r as unknown as LayoutElement) ?? initialLayoutElements
-  )
-  const [sessions, setSessions] = useState<BlockSession[]>(
-    () => loadList(STORAGE_KEYS.sessions, revivers.reviveSession) ?? initialSessions
-  )
-  const [payments, setPayments] = useState<Payment[]>(
-    () => loadList(STORAGE_KEYS.payments, revivers.revivePayment) ?? initialPayments
-  )
-  const [settings, setSettings] = useState<BusinessSettings>(
-    () => loadObject<BusinessSettings>(STORAGE_KEYS.settings) ?? initialSettings
-  )
+  const initializedRef = useRef(false)
+
+  const [blocks, setBlocks] = useState<ServiceBlock[]>(initialBlocks)
+  const [layoutElements, setLayoutElements] = useState<LayoutElement[]>(initialLayoutElements)
+  const [sessions, setSessions] = useState<BlockSession[]>(initialSessions)
+  const [payments, setPayments] = useState<Payment[]>(initialPayments)
+  const [settings, setSettings] = useState<BusinessSettings>(initialSettings)
   const [products, setProducts] = useState<Product[]>(initialProducts)
-  const [coupons, setCoupons] = useState<Coupon[]>(
-    () => loadList(STORAGE_KEYS.coupons, (r) => r as unknown as Coupon) ?? initialCoupons
-  )
+  const [coupons, setCoupons] = useState<Coupon[]>(initialCoupons)
   const [dbLoading, setDbLoading] = useState(false)
   const [dbError, setDbError] = useState<string | null>(null)
 
@@ -87,13 +77,32 @@ export function POSSystem() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 状態変化時に localStorage へ保存
-  useEffect(() => { saveList(STORAGE_KEYS.blocks, blocks) }, [blocks])
-  useEffect(() => { saveList(STORAGE_KEYS.layoutElements, layoutElements) }, [layoutElements])
-  useEffect(() => { saveList(STORAGE_KEYS.sessions, sessions) }, [sessions])
-  useEffect(() => { saveList(STORAGE_KEYS.payments, payments) }, [payments])
-  useEffect(() => { saveObject(STORAGE_KEYS.settings, settings) }, [settings])
-  useEffect(() => { saveList(STORAGE_KEYS.coupons, coupons) }, [coupons])
+  // 状態変化時に localStorage へ保存（初期ロード後のみ）
+  // ※ このsave effectsは必ずloadEffectより前に定義すること（effect実行順序に依存）
+  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.blocks, blocks) }, [blocks])
+  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.layoutElements, layoutElements) }, [layoutElements])
+  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.sessions, sessions) }, [sessions])
+  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.payments, payments) }, [payments])
+  useEffect(() => { if (initializedRef.current) saveObject(STORAGE_KEYS.settings, settings) }, [settings])
+  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.coupons, coupons) }, [coupons])
+
+  // localStorage から読み込む（クライアントサイドのみ・save effectsより後に定義すること）
+  useEffect(() => {
+    const savedBlocks = loadList(STORAGE_KEYS.blocks, revivers.reviveBlock)
+    const savedElements = loadList(STORAGE_KEYS.layoutElements, (r) => r as unknown as LayoutElement)
+    const savedSessions = loadList(STORAGE_KEYS.sessions, revivers.reviveSession)
+    const savedPayments = loadList(STORAGE_KEYS.payments, revivers.revivePayment)
+    const savedSettings = loadObject<BusinessSettings>(STORAGE_KEYS.settings)
+    const savedCoupons = loadList(STORAGE_KEYS.coupons, (r) => r as unknown as Coupon)
+    if (savedBlocks) setBlocks(savedBlocks)
+    if (savedElements) setLayoutElements(savedElements)
+    if (savedSessions) setSessions(savedSessions)
+    if (savedPayments) setPayments(savedPayments)
+    if (savedSettings) setSettings(savedSettings)
+    if (savedCoupons) setCoupons(savedCoupons)
+    initializedRef.current = true
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
