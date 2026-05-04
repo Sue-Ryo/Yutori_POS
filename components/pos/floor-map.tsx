@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import type { ServiceBlock, BlockSession, LayoutElement } from "@/lib/pos-types"
 import { formatElapsed } from "@/lib/pos-store"
-import { Clock, Timer, Link2, CheckCircle2 } from "lucide-react"
+import { Clock, Link2, CheckCircle2, ArrowRightLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 interface FloorMapProps {
@@ -20,6 +20,13 @@ interface FloorMapProps {
   onToggleLinkSelection: (blockId: string) => void
   onConfirmLink: () => void
   onCancelLinkMode: () => void
+  moveMode: boolean
+  moveSource: string | null
+  moveDest: string | null
+  onEnterMoveMode: () => void
+  onMoveBlockSelect: (blockId: string) => void
+  onConfirmMove: () => void
+  onCancelMoveMode: () => void
 }
 
 const statusColors: Record<string, string> = {
@@ -49,6 +56,13 @@ export function FloorMap({
   onToggleLinkSelection,
   onConfirmLink,
   onCancelLinkMode,
+  moveMode,
+  moveSource,
+  moveDest,
+  onEnterMoveMode,
+  onMoveBlockSelect,
+  onConfirmMove,
+  onCancelMoveMode,
 }: FloorMapProps) {
   const [now, setNow] = useState(new Date())
 
@@ -56,8 +70,6 @@ export function FloorMap({
     const id = setInterval(() => setNow(new Date()), 60000)
     return () => clearInterval(id)
   }, [])
-
-  const getSession = (blockId: string) => sessions.find((s) => s.blockId === blockId)
 
   // 連結情報を事前計算
   const linkedSecondaryIds = new Set<string>()
@@ -73,14 +85,19 @@ export function FloorMap({
   const isUnselectable = (block: ServiceBlock) =>
     block.status === "checked_out" || linkedSecondaryIds.has(block.id)
 
-  const getServingElapsed = (session: BlockSession | undefined): string | null => {
-    if (!session) return null
-    const servedItems = session.orderItems.filter((i) => i.servedAt)
-    if (servedItems.length === 0) return null
-    const earliest = servedItems.reduce((min, i) =>
-      i.servedAt!.getTime() < min.servedAt!.getTime() ? i : min
-    )
-    return formatElapsed(earliest.servedAt!, now)
+  // 席移動モード中の選択可否
+  const isMoveUnselectable = (block: ServiceBlock): boolean => {
+    if (moveSource === null) {
+      // ステップ1: 移動元 → 使用中かつ連結なしのみ
+      return (
+        block.status === "empty" ||
+        block.status === "checked_out" ||
+        linkedSecondaryIds.has(block.id) ||
+        primaryWithLinkIds.has(block.id)
+      )
+    }
+    // ステップ2: 移動先 → 空席のみ（移動元自身を除く）
+    return block.status !== "empty" || block.id === moveSource
   }
 
   return (
@@ -145,35 +162,44 @@ export function FloorMap({
       {/* Blocks */}
       {blocks.map((block) => {
         const isSelected = selectedBlockId === block.id
-        const session = getSession(block.id)
-        const servingElapsed = getServingElapsed(session)
         const isLinkedSecondary = linkedSecondaryIds.has(block.id)
         const isLinkedPrimary = primaryWithLinkIds.has(block.id)
         const isLinkSelected = linkSelection.includes(block.id)
-        const unselectable = linkMode && isUnselectable(block)
+        const linkUnselectable = linkMode && isUnselectable(block)
+        const moveUnselectable = moveMode && isMoveUnselectable(block)
+        const isMoveSource = moveMode && block.id === moveSource
+        const isMoveDest = moveMode && block.id === moveDest
 
         const handleClick = linkMode
-          ? () => { if (!unselectable) onToggleLinkSelection(block.id) }
-          : () => onBlockClick(block.id)
+          ? () => { if (!linkUnselectable) onToggleLinkSelection(block.id) }
+          : moveMode
+            ? () => { if (!moveUnselectable) onMoveBlockSelect(block.id) }
+            : () => onBlockClick(block.id)
 
         return (
           <button
             key={block.id}
             onClick={handleClick}
-            disabled={unselectable}
+            disabled={linkUnselectable || moveUnselectable}
             className={cn(
               "absolute flex flex-col items-center justify-center rounded-lg border-2 text-foreground shadow-lg transition-all",
               statusColors[block.status],
-              // 通常モードの選択・連結表示
-              !linkMode && isSelected && "border-primary ring-2 ring-primary/50",
-              !linkMode && !isSelected && isLinkedSecondary && "border-info ring-2 ring-info/30",
-              !linkMode && !isSelected && !isLinkedSecondary && "border-transparent",
+              // 通常モード
+              !linkMode && !moveMode && isSelected && "border-primary ring-2 ring-primary/50",
+              !linkMode && !moveMode && !isSelected && isLinkedSecondary && "border-info ring-2 ring-info/30",
+              !linkMode && !moveMode && !isSelected && !isLinkedSecondary && "border-transparent",
+              !linkMode && !moveMode && "hover:scale-105 active:scale-95",
               // 連結モード
-              linkMode && !unselectable && "cursor-pointer hover:scale-105 active:scale-95",
+              linkMode && !linkUnselectable && "cursor-pointer hover:scale-105 active:scale-95",
               linkMode && isLinkSelected && "border-success ring-2 ring-success/60 scale-105",
-              linkMode && !isLinkSelected && !unselectable && "border-dashed border-muted-foreground/50 hover:border-success",
-              linkMode && unselectable && "cursor-not-allowed opacity-40",
-              !linkMode && "hover:scale-105 active:scale-95",
+              linkMode && !isLinkSelected && !linkUnselectable && "border-dashed border-muted-foreground/50 hover:border-success",
+              linkMode && linkUnselectable && "cursor-not-allowed opacity-40",
+              // 席移動モード
+              moveMode && !moveUnselectable && "cursor-pointer hover:scale-105 active:scale-95",
+              moveMode && moveUnselectable && "cursor-not-allowed opacity-40",
+              isMoveSource && "border-amber-500 ring-2 ring-amber-400/60 scale-105",
+              isMoveDest && "border-teal-500 ring-2 ring-teal-400/60 scale-105",
+              moveMode && !isMoveSource && !isMoveDest && !moveUnselectable && "border-dashed border-muted-foreground/50",
             )}
             style={{
               left: block.x,
@@ -187,8 +213,15 @@ export function FloorMap({
             {linkMode && isLinkSelected && (
               <CheckCircle2 className="absolute right-1 top-1 h-3.5 w-3.5 text-success" />
             )}
+            {/* 席移動モード: 移動元/移動先ラベル */}
+            {isMoveSource && (
+              <span className="absolute right-1 top-1 text-[9px] font-bold text-amber-500">移動元</span>
+            )}
+            {isMoveDest && (
+              <span className="absolute right-1 top-1 text-[9px] font-bold text-teal-500">移動先</span>
+            )}
             {/* 通常モード: 連結アイコン */}
-            {!linkMode && (isLinkedPrimary || isLinkedSecondary) && (
+            {!linkMode && !moveMode && (isLinkedPrimary || isLinkedSecondary) && (
               <Link2 className="absolute right-1 top-1 h-3 w-3 opacity-60" />
             )}
             <span className="text-sm font-bold leading-tight">{block.name}</span>
@@ -199,12 +232,6 @@ export function FloorMap({
               <div className="mt-1 flex items-center gap-1 text-[10px] opacity-80">
                 <Clock className="h-2.5 w-2.5" />
                 <span>{formatElapsed(block.startedAt, now)}</span>
-              </div>
-            )}
-            {servingElapsed && !isLinkedSecondary && (
-              <div className="flex items-center gap-1 text-[10px] opacity-80">
-                <Timer className="h-2.5 w-2.5" />
-                <span>{servingElapsed}</span>
               </div>
             )}
           </button>
@@ -228,12 +255,35 @@ export function FloorMap({
             キャンセル
           </Button>
         </div>
+      ) : moveMode ? (
+        <div className="absolute bottom-4 left-4 flex items-center gap-2 rounded-lg border border-amber-400/60 bg-card/95 px-3 py-2 shadow-md">
+          <ArrowRightLeft className="h-4 w-4 text-amber-500" />
+          <span className="text-sm font-medium text-amber-600">
+            {moveSource === null ? "移動元の席をタップ" : "移動先の空席をタップ"}
+          </span>
+          {moveSource && moveDest && (
+            <Button
+              size="sm"
+              className="ml-1 bg-success text-primary-foreground hover:bg-success/90"
+              onClick={onConfirmMove}
+            >
+              移動する
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={onCancelMoveMode}>
+            キャンセル
+          </Button>
+        </div>
       ) : (
         <div className="absolute bottom-4 left-4 flex items-center gap-3">
           <span className="text-xs text-muted-foreground">タップでブロック操作</span>
           <Button size="sm" variant="outline" className="gap-1.5" onClick={onEnterLinkMode}>
             <Link2 className="h-3.5 w-3.5" />
             席を連結
+          </Button>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={onEnterMoveMode}>
+            <ArrowRightLeft className="h-3.5 w-3.5" />
+            席移動
           </Button>
         </div>
       )}

@@ -108,34 +108,14 @@ export function POSSystem() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [linkMode, setLinkMode] = useState(false)
   const [linkSelection, setLinkSelection] = useState<string[]>([])
+  const [moveMode, setMoveMode] = useState(false)
+  const [moveSource, setMoveSource] = useState<string | null>(null)
+  const [moveDest, setMoveDest] = useState<string | null>(null)
 
   const selectedBlock = selectedBlockId ? blocks.find((b) => b.id === selectedBlockId) ?? null : null
   const currentSession = selectedBlockId
     ? sessions.find((s) => s.blockId === selectedBlockId && !s.endedAt) ?? null
     : null
-
-  // 会計済ブロックの自動クリアタイマー
-  useEffect(() => {
-    const checkedOutBlocks = blocks.filter((b) => b.status === "checked_out" && b.checkedOutAt)
-    if (checkedOutBlocks.length === 0) return
-
-    const id = setInterval(() => {
-      const now = Date.now()
-      setBlocks((prev) =>
-        prev.map((b) => {
-          if (b.status === "checked_out" && b.checkedOutAt) {
-            const elapsed = (now - b.checkedOutAt.getTime()) / 1000
-            if (elapsed >= settings.checkedOutDisplaySeconds) {
-              return { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
-            }
-          }
-          return b
-        })
-      )
-    }, 1000)
-
-    return () => clearInterval(id)
-  }, [blocks, settings.checkedOutDisplaySeconds])
 
   const handleBlockClick = useCallback((blockId: string) => {
     // 連結先（サブ）ブロックをクリックした場合はプライマリブロックのセッションを開く
@@ -150,6 +130,29 @@ export function POSSystem() {
     setSidebarOpen(false)
     setSelectedBlockId(null)
   }, [])
+
+  const handleBussingComplete = useCallback(() => {
+    if (!selectedBlockId) return
+
+    // 終了済セッションからプライマリ+連結ブロックIDを取得
+    const endedSession = sessions.find(
+      (s) =>
+        (s.blockId === selectedBlockId || (s.linkedBlockIds ?? []).includes(selectedBlockId)) &&
+        s.endedAt,
+    )
+    const allBlockIds = endedSession
+      ? [endedSession.blockId, ...(endedSession.linkedBlockIds ?? [])]
+      : [selectedBlockId]
+
+    setBlocks((prev) =>
+      prev.map((b) =>
+        allBlockIds.includes(b.id)
+          ? { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
+          : b,
+      ),
+    )
+    handleCloseSidebar()
+  }, [selectedBlockId, sessions, handleCloseSidebar])
 
   const handleUpdateSession = useCallback(
     (updatedSession: BlockSession) => {
@@ -367,6 +370,63 @@ export function POSSystem() {
     )
   }, [])
 
+  // ── 席移動モード ──────────────────────────────────────────────────────
+
+  const handleEnterMoveMode = useCallback(() => {
+    setMoveMode(true)
+    setMoveSource(null)
+    setMoveDest(null)
+    setLinkMode(false)
+    setLinkSelection([])
+    setSidebarOpen(false)
+    setSelectedBlockId(null)
+  }, [])
+
+  const handleCancelMoveMode = useCallback(() => {
+    setMoveMode(false)
+    setMoveSource(null)
+    setMoveDest(null)
+  }, [])
+
+  const handleMoveBlockSelect = useCallback((blockId: string) => {
+    setMoveSource((src) => {
+      if (src === null) return blockId        // ステップ1: 移動元を選択
+      if (src === blockId) {                  // 移動元を再タップ → 解除
+        setMoveDest(null)
+        return null
+      }
+      setMoveDest((dst) => dst === blockId ? null : blockId)  // ステップ2: 移動先をトグル
+      return src
+    })
+  }, [])
+
+  const handleConfirmMove = useCallback(() => {
+    if (!moveSource || !moveDest) return
+
+    const sourceSession = sessions.find((s) => s.blockId === moveSource && !s.endedAt)
+    if (!sourceSession) return
+
+    const sourceBlock = blocks.find((b) => b.id === moveSource)
+
+    // セッションの blockId を移動先に変更
+    setSessions((prev) =>
+      prev.map((s) => s.id === sourceSession.id ? { ...s, blockId: moveDest } : s)
+    )
+
+    // ブロックのステータスを付け替え
+    setBlocks((prev) =>
+      prev.map((b) => {
+        if (b.id === moveSource) return { ...b, status: "empty", startedAt: undefined }
+        if (b.id === moveDest) return { ...b, status: sourceBlock?.status ?? "occupied", startedAt: sourceBlock?.startedAt }
+        return b
+      })
+    )
+
+    setMoveMode(false)
+    setMoveSource(null)
+    setMoveDest(null)
+  }, [moveSource, moveDest, sessions, blocks])
+
   const handleSaveLayout = useCallback(
     (newBlocks: ServiceBlock[], newElements: LayoutElement[]) => {
       setBlocks(newBlocks)
@@ -414,7 +474,7 @@ export function POSSystem() {
   return (
     <div className="flex h-screen flex-col bg-background">
       {/* Header */}
-      <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3">
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
             <UtensilsCrossed className="h-5 w-5" />
@@ -485,6 +545,13 @@ export function POSSystem() {
             onToggleLinkSelection={handleToggleLinkSelection}
             onConfirmLink={handleConfirmLink}
             onCancelLinkMode={handleCancelLinkMode}
+            moveMode={moveMode}
+            moveSource={moveSource}
+            moveDest={moveDest}
+            onEnterMoveMode={handleEnterMoveMode}
+            onMoveBlockSelect={handleMoveBlockSelect}
+            onConfirmMove={handleConfirmMove}
+            onCancelMoveMode={handleCancelMoveMode}
           />
         )}
 
@@ -529,6 +596,7 @@ export function POSSystem() {
         onUpdateSession={handleUpdateSession}
         onCheckout={handleCheckout}
         onUnlinkBlock={handleUnlinkBlock}
+        onBussingComplete={handleBussingComplete}
       />
 
       {sidebarOpen && activeTab === "map" && (

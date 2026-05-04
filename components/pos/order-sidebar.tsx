@@ -27,12 +27,17 @@ import {
   ChevronUp,
   Trash2,
   MessageSquare,
-  Timer,
   Users,
   Link2,
   FileText,
   ShoppingCart,
+  Zap,
+  CheckCheck,
 } from "lucide-react"
+
+const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "ドリンク"]
+const HAPPY_HOUR_BASE = 3000
+const DRINK_THRESHOLD = 600
 
 interface OrderSidebarProps {
   isOpen: boolean
@@ -46,6 +51,7 @@ interface OrderSidebarProps {
   onUpdateSession: (session: BlockSession) => void
   onCheckout: (sessionId: string, data: CheckoutData) => void
   onUnlinkBlock: (sessionId: string, blockIdToUnlink: string) => void
+  onBussingComplete: () => void
 }
 
 export function OrderSidebar({
@@ -60,6 +66,7 @@ export function OrderSidebar({
   onUpdateSession,
   onCheckout,
   onUnlinkBlock,
+  onBussingComplete,
 }: OrderSidebarProps) {
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({})
@@ -71,6 +78,7 @@ export function OrderSidebar({
   const [guestCount, setGuestCount] = useState<number>(session?.guestCount ?? 1)
   const [editingMemoId, setEditingMemoId] = useState<string | null>(null)
   const [noteText, setNoteText] = useState<string>(session?.note ?? "")
+  const [happyHour, setHappyHour] = useState(false)
 
   useEffect(() => {
     setNoteText(session?.note ?? "")
@@ -81,6 +89,7 @@ export function OrderSidebar({
     if (!isOpen) {
       setShowOrderModal(false)
       setPendingCounts({})
+      setHappyHour(false)
     }
   }, [isOpen])
 
@@ -94,6 +103,11 @@ export function OrderSidebar({
 
   // Rules of Hooks: 条件付き return より前に全 Hook を呼ぶ
   const activeProducts = products.filter((p) => p.isActive)
+  const productCategoryMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    products.forEach((p) => { map[p.id] = p.category })
+    return map
+  }, [products])
   const sortedCategories = useMemo(() => {
     const seen = new Set<string>()
     const cats: string[] = []
@@ -118,7 +132,21 @@ export function OrderSidebar({
       ? unpaidItems.filter((i) => selectedItemIds.includes(i.id))
       : unpaidItems
 
-  const subtotal = targetItems.reduce((sum, i) => sum + i.subtotal, 0)
+  // ハッピーアワー計算（1人ずつ処理）
+  const drinkSubtotal = targetItems
+    .filter((i) => productCategoryMap[i.productId] === "ドリンク")
+    .reduce((sum, i) => sum + i.subtotal, 0)
+  const nonHhSubtotal = targetItems
+    .filter((i) => !HAPPY_HOUR_CATEGORIES.includes(productCategoryMap[i.productId] ?? ""))
+    .reduce((sum, i) => sum + i.subtotal, 0)
+  const drinkPerPerson = guestCount > 0 ? drinkSubtotal / guestCount : 0
+  const drinkOveragePerPerson = Math.max(0, drinkPerPerson - DRINK_THRESHOLD)
+  const hhPerPerson = HAPPY_HOUR_BASE + drinkOveragePerPerson
+  const happyHourCharge = Math.round(hhPerPerson * guestCount)
+
+  const subtotal = happyHour
+    ? happyHourCharge + nonHhSubtotal
+    : targetItems.reduce((sum, i) => sum + i.subtotal, 0)
 
   const selectedCoupon = coupons.find((c) => c.id === selectedCouponId && c.isActive)
   const discountAmount = selectedCoupon
@@ -246,20 +274,6 @@ export function OrderSidebar({
           : i,
       )
       .filter((i) => i.quantity > 0)
-    onUpdateSession({ ...session, orderItems: updatedItems })
-  }
-
-  const handleToggleServed = (itemId: string) => {
-    if (!session) return
-    const updatedItems = session.orderItems.map((i) => {
-      if (i.id !== itemId) return i
-      const nowServed = i.servingStatus === "unserved"
-      return {
-        ...i,
-        servingStatus: nowServed ? ("served" as const) : ("unserved" as const),
-        servedAt: nowServed ? new Date() : undefined,
-      }
-    })
     onUpdateSession({ ...session, orderItems: updatedItems })
   }
 
@@ -444,7 +458,6 @@ export function OrderSidebar({
                   className={cn(
                     "rounded-lg border border-border p-3 transition-colors",
                     splitMode && selectedItemIds.includes(item.id) && "border-primary bg-primary/10",
-                    item.servingStatus === "served" && "bg-success/10",
                   )}
                   onClick={() => splitMode && handleSplitToggle(item.id)}
                 >
@@ -469,12 +482,6 @@ export function OrderSidebar({
                         ¥{item.price.toLocaleString()} × {item.quantity} = ¥
                         {item.subtotal.toLocaleString()}
                       </p>
-                      {item.servedAt && (
-                        <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                          <Timer className="h-2.5 w-2.5" />
-                          提供: {formatTime(item.servedAt)}
-                        </p>
-                      )}
                       {editingMemoId === item.id ? (
                         <div className="mt-1 flex gap-1" onClick={(e) => e.stopPropagation()}>
                           <Input
@@ -534,27 +541,6 @@ export function OrderSidebar({
                     </div>
                     <div className="flex items-center gap-1">
                       <Button
-                        variant={item.servingStatus === "served" ? "default" : "secondary"}
-                        size="sm"
-                        className={cn(
-                          "h-7 w-20 text-xs",
-                          item.servingStatus === "served" && "bg-success text-primary-foreground",
-                        )}
-                        onClick={() => handleToggleServed(item.id)}
-                      >
-                        {item.servingStatus === "served" ? (
-                          <>
-                            <Check className="mr-1 h-3 w-3" />
-                            提供済
-                          </>
-                        ) : (
-                          <>
-                            <Clock className="mr-1 h-3 w-3" />
-                            未提供
-                          </>
-                        )}
-                      </Button>
-                      <Button
                         variant="ghost"
                         size="icon"
                         className="h-7 w-7 text-destructive hover:text-destructive"
@@ -576,6 +562,22 @@ export function OrderSidebar({
 
         {/* 会計エリア */}
         <div className="space-y-3 border-t border-border p-4">
+          {/* ハッピーアワートグル */}
+          <Button
+            variant={happyHour ? "default" : "outline"}
+            size="sm"
+            className={cn(
+              "w-full",
+              happyHour
+                ? "bg-amber-500 hover:bg-amber-500/90 text-white border-amber-500"
+                : "border-amber-400 text-amber-600 hover:bg-amber-50",
+            )}
+            onClick={() => setHappyHour(!happyHour)}
+          >
+            <Zap className={cn("mr-1.5 h-4 w-4", happyHour && "fill-white")} />
+            {happyHour ? `ハッピーアワー適用中 (¥${Math.round(hhPerPerson).toLocaleString()}/人)` : "ハッピーアワー"}
+          </Button>
+
           <div className="flex gap-2">
             <Button
               variant={splitMode ? "default" : "outline"}
@@ -610,10 +612,35 @@ export function OrderSidebar({
           </div>
 
           <div className="space-y-1 rounded-lg bg-muted p-3 text-sm">
-            <div className="flex justify-between text-muted-foreground">
-              <span>小計</span>
-              <span>¥{subtotal.toLocaleString()}</span>
-            </div>
+            {happyHour ? (
+              <>
+                <div className="flex justify-between text-amber-600 dark:text-amber-400">
+                  <span>HH基本 (¥{HAPPY_HOUR_BASE.toLocaleString()} × {guestCount}名)</span>
+                  <span>¥{(HAPPY_HOUR_BASE * guestCount).toLocaleString()}</span>
+                </div>
+                {drinkOveragePerPerson > 0 && (
+                  <div className="flex justify-between text-amber-600 dark:text-amber-400">
+                    <span>ドリンク超過 (+¥{Math.round(drinkOveragePerPerson).toLocaleString()}/人 × {guestCount}名)</span>
+                    <span>¥{Math.round(drinkOveragePerPerson * guestCount).toLocaleString()}</span>
+                  </div>
+                )}
+                {nonHhSubtotal > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>その他</span>
+                    <span>¥{nonHhSubtotal.toLocaleString()}</span>
+                  </div>
+                )}
+                <div className="flex justify-between border-t border-border pt-1 text-muted-foreground">
+                  <span>小計</span>
+                  <span>¥{subtotal.toLocaleString()}</span>
+                </div>
+              </>
+            ) : (
+              <div className="flex justify-between text-muted-foreground">
+                <span>小計</span>
+                <span>¥{subtotal.toLocaleString()}</span>
+              </div>
+            )}
             {discountAmount > 0 && (
               <div className="flex justify-between text-warning">
                 <span>割引</span>
@@ -680,6 +707,20 @@ export function OrderSidebar({
               </div>
             </Button>
           </div>
+
+          {selectedBlock.status === "checked_out" && (
+            <Button
+              size="lg"
+              className="h-14 w-full bg-primary text-primary-foreground hover:bg-primary/90"
+              onClick={onBussingComplete}
+            >
+              <CheckCheck className="mr-2 h-5 w-5" />
+              <div className="flex flex-col items-start">
+                <span className="font-bold">バッシング完了</span>
+                <span className="text-xs opacity-80">空席にする</span>
+              </div>
+            </Button>
+          )}
         </div>
       </div>
 
