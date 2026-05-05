@@ -480,10 +480,19 @@ export function OrderSidebar({
                           {formatTime(item.orderedAt)}
                         </span>
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        ¥{item.price.toLocaleString()} × {item.quantity} = ¥
-                        {item.subtotal.toLocaleString()}
-                      </p>
+                      {happyHour && HAPPY_HOUR_CATEGORIES.includes(productCategoryMap[item.productId] ?? "") ? (
+                        <p className="flex items-center gap-1 text-xs">
+                          <span className="line-through text-muted-foreground/50">
+                            ¥{item.price.toLocaleString()} × {item.quantity} = ¥{item.subtotal.toLocaleString()}
+                          </span>
+                          <span className="rounded bg-amber-500/20 px-1 py-0.5 text-[10px] font-medium text-amber-600">HH</span>
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          ¥{item.price.toLocaleString()} × {item.quantity} = ¥
+                          {item.subtotal.toLocaleString()}
+                        </p>
+                      )}
                       {editingMemoId === item.id ? (
                         <div className="mt-1 flex gap-1" onClick={(e) => e.stopPropagation()}>
                           <Input

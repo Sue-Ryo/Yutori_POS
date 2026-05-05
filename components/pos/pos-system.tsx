@@ -442,6 +442,17 @@ export function POSSystem() {
       setSessions((prev) =>
         prev.map((s) => (s.id === existingSession.id ? { ...s, linkedBlockIds } : s))
       )
+      // サブブロックのステータスをプライマリに合わせる
+      const primaryBlock = blocks.find((b) => b.id === primaryBlockId)
+      if (primaryBlock) {
+        setBlocks((prev) =>
+          prev.map((b) =>
+            secondaryBlockIds.includes(b.id)
+              ? { ...b, status: primaryBlock.status, startedAt: primaryBlock.startedAt }
+              : b
+          )
+        )
+      }
     } else {
       const newSession: BlockSession = {
         id: `s-${Date.now()}`,
@@ -452,9 +463,12 @@ export function POSSystem() {
         linkedBlockIds: secondaryBlockIds,
       }
       setSessions((prev) => [...prev, newSession])
+      // プライマリ・サブ両方を occupied に
       setBlocks((prev) =>
         prev.map((b) =>
-          b.id === primaryBlockId ? { ...b, status: "occupied", startedAt: now } : b
+          b.id === primaryBlockId || secondaryBlockIds.includes(b.id)
+            ? { ...b, status: "occupied", startedAt: now }
+            : b
         )
       )
     }
