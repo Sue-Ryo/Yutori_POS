@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 import type { ServiceBlock, BlockSession, LayoutElement } from "@/lib/pos-types"
 import { formatElapsed } from "@/lib/pos-store"
@@ -27,19 +27,20 @@ interface FloorMapProps {
   onMoveBlockSelect: (blockId: string) => void
   onConfirmMove: () => void
   onCancelMoveMode: () => void
+  onDoubleTapBussing: (blockId: string) => void
 }
 
 const statusColors: Record<string, string> = {
   empty: "bg-table-empty hover:bg-table-empty/80",
+  reserved: "bg-table-reserved hover:bg-table-reserved/80",
   occupied: "bg-table-occupied hover:bg-table-occupied/80",
-  waiting: "bg-table-waiting hover:bg-table-waiting/80",
   checked_out: "bg-table-checked-out hover:bg-table-checked-out/80",
 }
 
 const statusLabels: Record<string, string> = {
   empty: "空席",
+  reserved: "予約",
   occupied: "使用中",
-  waiting: "提供待ち",
   checked_out: "会計済",
 }
 
@@ -63,8 +64,10 @@ export function FloorMap({
   onMoveBlockSelect,
   onConfirmMove,
   onCancelMoveMode,
+  onDoubleTapBussing,
 }: FloorMapProps) {
   const [now, setNow] = useState(new Date())
+  const lastTapRef = useRef<{ blockId: string; time: number } | null>(null)
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60000)
@@ -109,12 +112,12 @@ export function FloorMap({
           <span className="text-muted-foreground">空席</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="h-3 w-3 rounded bg-table-occupied" />
-          <span className="text-muted-foreground">使用中</span>
+          <div className="h-3 w-3 rounded bg-table-reserved" />
+          <span className="text-muted-foreground">予約</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="h-3 w-3 rounded bg-table-waiting" />
-          <span className="text-muted-foreground">提供待ち</span>
+          <div className="h-3 w-3 rounded bg-table-occupied" />
+          <span className="text-muted-foreground">使用中</span>
         </div>
         <div className="flex items-center gap-2">
           <div className="h-3 w-3 rounded bg-table-checked-out" />
@@ -174,7 +177,19 @@ export function FloorMap({
           ? () => { if (!linkUnselectable) onToggleLinkSelection(block.id) }
           : moveMode
             ? () => { if (!moveUnselectable) onMoveBlockSelect(block.id) }
-            : () => onBlockClick(block.id)
+            : () => {
+                if (block.status === "checked_out") {
+                  const now = Date.now()
+                  const last = lastTapRef.current
+                  if (last && last.blockId === block.id && now - last.time < 300) {
+                    lastTapRef.current = null
+                    onDoubleTapBussing(block.id)
+                    return
+                  }
+                  lastTapRef.current = { blockId: block.id, time: now }
+                }
+                onBlockClick(block.id)
+              }
 
         return (
           <button

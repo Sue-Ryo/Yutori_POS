@@ -238,19 +238,15 @@ export function POSSystem() {
     setSelectedBlockId(null)
   }, [])
 
-  const handleBussingComplete = useCallback(() => {
-    if (!selectedBlockId) return
-
-    // 終了済セッションからプライマリ+連結ブロックIDを取得
+  const bussingById = useCallback((blockId: string) => {
     const endedSession = sessions.find(
       (s) =>
-        (s.blockId === selectedBlockId || (s.linkedBlockIds ?? []).includes(selectedBlockId)) &&
+        (s.blockId === blockId || (s.linkedBlockIds ?? []).includes(blockId)) &&
         s.endedAt,
     )
     const allBlockIds = endedSession
       ? [endedSession.blockId, ...(endedSession.linkedBlockIds ?? [])]
-      : [selectedBlockId]
-
+      : [blockId]
     setBlocks((prev) =>
       prev.map((b) =>
         allBlockIds.includes(b.id)
@@ -258,8 +254,13 @@ export function POSSystem() {
           : b,
       ),
     )
+  }, [sessions])
+
+  const handleBussingComplete = useCallback(() => {
+    if (!selectedBlockId) return
+    bussingById(selectedBlockId)
     handleCloseSidebar()
-  }, [selectedBlockId, sessions, handleCloseSidebar])
+  }, [selectedBlockId, bussingById, handleCloseSidebar])
 
   const handleUpdateSession = useCallback(
     (updatedSession: BlockSession) => {
@@ -274,7 +275,7 @@ export function POSSystem() {
       const unpaidItems = updatedSession.orderItems.filter((i) => !i.isPaid)
       const hasUnserved = unpaidItems.some((i) => i.servingStatus === "unserved")
       const hasItems = unpaidItems.length > 0
-      const status = hasItems ? (hasUnserved ? "waiting" : "occupied") : "empty"
+      const status = hasItems ? "occupied" : "empty"
       // プライマリ + 連結ブロック全てのステータスを更新
       const allBlockIds = [updatedSession.blockId, ...(updatedSession.linkedBlockIds ?? [])]
       setBlocks((prev) =>
@@ -347,7 +348,7 @@ export function POSSystem() {
           // 一部会計済みの場合はステータス再計算
           const remaining = updatedItems.filter((i) => !i.isPaid)
           const hasUnserved = remaining.some((i) => i.servingStatus === "unserved")
-          return { ...b, status: remaining.length > 0 ? (hasUnserved ? "waiting" : "occupied") : "empty" }
+          return { ...b, status: remaining.length > 0 ? "occupied" : "empty" }
         })
       )
 
@@ -394,6 +395,16 @@ export function POSSystem() {
     },
     [payments, sessions]
   )
+
+  const handleReserveBlock = useCallback((blockId: string) => {
+    setBlocks((prev) =>
+      prev.map((b) =>
+        b.id === blockId
+          ? { ...b, status: b.status === "reserved" ? "empty" : "reserved" }
+          : b
+      )
+    )
+  }, [])
 
   // ── 連結モード ────────────────────────────────────────────────────────
 
@@ -661,6 +672,7 @@ export function POSSystem() {
             onMoveBlockSelect={handleMoveBlockSelect}
             onConfirmMove={handleConfirmMove}
             onCancelMoveMode={handleCancelMoveMode}
+            onDoubleTapBussing={bussingById}
           />
         )}
 
@@ -706,6 +718,7 @@ export function POSSystem() {
         onCheckout={handleCheckout}
         onUnlinkBlock={handleUnlinkBlock}
         onBussingComplete={handleBussingComplete}
+        onReserveBlock={handleReserveBlock}
       />
 
       {sidebarOpen && activeTab === "map" && (

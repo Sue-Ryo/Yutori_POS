@@ -716,36 +716,34 @@ export function AdminReport({
           {/* ── 日計タブ ── */}
           {activeTab === "daily" && (
             <>
+              {/* 期間切り替え */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">{periodLabel}</span>
+                <div className="flex overflow-hidden rounded-md border border-border">
+                  {PERIOD_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.id}
+                      className={cn(
+                        "px-3 py-1.5 text-xs font-medium transition-colors",
+                        period === opt.id
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:bg-muted",
+                      )}
+                      onClick={() => setPeriod(opt.id)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <Card>
                 <CardHeader>
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        <TrendingUp className="h-5 w-5 text-primary" />
-                        レポート
-                      </CardTitle>
-                      <CardDescription>{periodLabel}</CardDescription>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex overflow-hidden rounded-md border border-border">
-                        {PERIOD_OPTIONS.map((opt) => (
-                          <button
-                            key={opt.id}
-                            className={cn(
-                              "px-3 py-1.5 text-xs font-medium transition-colors",
-                              period === opt.id
-                                ? "bg-primary text-primary-foreground"
-                                : "text-muted-foreground hover:bg-muted",
-                            )}
-                            onClick={() => setPeriod(opt.id)}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-
-                    </div>
-                  </div>
+                  <CardTitle className="flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5 text-primary" />
+                    レポート
+                  </CardTitle>
+                  <CardDescription>{periodLabel}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

@@ -52,6 +52,7 @@ interface OrderSidebarProps {
   onCheckout: (sessionId: string, data: CheckoutData) => void
   onUnlinkBlock: (sessionId: string, blockIdToUnlink: string) => void
   onBussingComplete: () => void
+  onReserveBlock: (blockId: string) => void
 }
 
 export function OrderSidebar({
@@ -67,6 +68,7 @@ export function OrderSidebar({
   onCheckout,
   onUnlinkBlock,
   onBussingComplete,
+  onReserveBlock,
 }: OrderSidebarProps) {
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({})
@@ -718,6 +720,24 @@ export function OrderSidebar({
               <div className="flex flex-col items-start">
                 <span className="font-bold">バッシング完了</span>
                 <span className="text-xs opacity-80">空席にする</span>
+              </div>
+            </Button>
+          )}
+
+          {(selectedBlock.status === "empty" || selectedBlock.status === "reserved") && !session && (
+            <Button
+              size="lg"
+              variant={selectedBlock.status === "reserved" ? "destructive" : "outline"}
+              className="h-14 w-full"
+              onClick={() => onReserveBlock(selectedBlock.id)}
+            >
+              <div className="flex flex-col items-start">
+                <span className="font-bold">
+                  {selectedBlock.status === "reserved" ? "予約を解除" : "予約にする"}
+                </span>
+                <span className="text-xs opacity-80">
+                  {selectedBlock.status === "reserved" ? "空席に戻す" : "席を仮押さえ"}
+                </span>
               </div>
             </Button>
           )}
