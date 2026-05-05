@@ -35,7 +35,8 @@ import {
   CheckCheck,
 } from "lucide-react"
 
-const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "ドリンク"]
+const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "ドリンク", "システム", "shisha", "system", "drink", "charge"]
+const DRINK_CATEGORIES = ["ドリンク", "drink"]
 const HAPPY_HOUR_BASE = 3000
 const DRINK_THRESHOLD = 600
 
@@ -138,7 +139,7 @@ export function OrderSidebar({
   const itemCategory = (i: { productId: string; category?: string }) =>
     i.category ?? productCategoryMap[i.productId] ?? ""
   const drinkSubtotal = targetItems
-    .filter((i) => itemCategory(i) === "ドリンク")
+    .filter((i) => DRINK_CATEGORIES.includes(itemCategory(i)))
     .reduce((sum, i) => sum + i.subtotal, 0)
   const nonHhSubtotal = targetItems
     .filter((i) => !HAPPY_HOUR_CATEGORIES.includes(itemCategory(i)))
@@ -478,17 +479,19 @@ export function OrderSidebar({
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="truncate font-medium text-sm">{item.name}</p>
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <p className="truncate font-medium text-sm">{item.name}</p>
+                          {happyHour && HAPPY_HOUR_CATEGORIES.includes(itemCategory(item)) && (
+                            <span className="shrink-0 rounded bg-orange-500 px-1 py-0.5 text-[10px] font-bold text-white">HH</span>
+                          )}
+                        </div>
                         <span className="whitespace-nowrap text-xs text-muted-foreground">
                           {formatTime(item.orderedAt)}
                         </span>
                       </div>
                       {happyHour && HAPPY_HOUR_CATEGORIES.includes(itemCategory(item)) ? (
-                        <p className="flex items-center gap-1 text-xs">
-                          <span className="line-through text-muted-foreground/50">
-                            ¥{item.price.toLocaleString()} × {item.quantity} = ¥{item.subtotal.toLocaleString()}
-                          </span>
-                          <span className="rounded bg-amber-500/20 px-1 py-0.5 text-[10px] font-medium text-amber-600">HH</span>
+                        <p className="text-xs text-muted-foreground line-through">
+                          ¥{item.price.toLocaleString()} × {item.quantity} = ¥{item.subtotal.toLocaleString()}
                         </p>
                       ) : (
                         <p className="text-xs text-muted-foreground">
