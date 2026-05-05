@@ -9,7 +9,6 @@ import type {
   Coupon,
   DiscountType,
 } from "@/lib/pos-types"
-import { getBusinessDate } from "@/lib/pos-store"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -23,6 +22,7 @@ import {
   Receipt,
   Undo2,
   Calculator,
+  Download,
   Store,
   BarChart2,
   Package,
@@ -35,12 +35,9 @@ import {
   FolderPlus,
   ToggleLeft,
   ToggleRight,
-  ChevronLeft,
-  ChevronRight,
 } from "lucide-react"
 
 type AdminTab = "daily" | "products" | "coupons" | "settings"
-type PeriodType = "day" | "week" | "month"
 
 interface AdminReportProps {
   payments: Payment[]
@@ -641,74 +638,10 @@ export function AdminReport({
   onUpdateCoupons,
 }: AdminReportProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("daily")
-  const [periodType, setPeriodType] = useState<PeriodType>("day")
   const [expenses, setExpenses] = useState(0)
   const [handoverNote, setHandoverNote] = useState("")
-  const [selectedDate, setSelectedDate] = useState(() =>
-    getBusinessDate(new Date(), settings.businessDayStartTime)
-  )
 
-  const todayBusinessDate = getBusinessDate(new Date(), settings.businessDayStartTime)
-
-  const getPeriodDates = (anchor: string, type: PeriodType) => {
-    const d = new Date(anchor + "T12:00:00")
-    if (type === "day") return { start: anchor, end: anchor }
-    if (type === "week") {
-      const dow = d.getDay()
-      const toMon = dow === 0 ? -6 : 1 - dow
-      const mon = new Date(d); mon.setDate(d.getDate() + toMon)
-      const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
-      return { start: mon.toISOString().split("T")[0], end: sun.toISOString().split("T")[0] }
-    }
-    const year = d.getFullYear(), month = d.getMonth()
-    return {
-      start: new Date(year, month, 1).toISOString().split("T")[0],
-      end: new Date(year, month + 1, 0).toISOString().split("T")[0],
-    }
-  }
-
-  const { start: periodStart, end: periodEnd } = getPeriodDates(selectedDate, periodType)
-
-  const handlePrev = () => {
-    const d = new Date(selectedDate + "T12:00:00")
-    if (periodType === "day") d.setDate(d.getDate() - 1)
-    else if (periodType === "week") d.setDate(d.getDate() - 7)
-    else d.setMonth(d.getMonth() - 1)
-    setSelectedDate(d.toISOString().split("T")[0])
-  }
-
-  const handleNext = () => {
-    const d = new Date(selectedDate + "T12:00:00")
-    if (periodType === "day") d.setDate(d.getDate() + 1)
-    else if (periodType === "week") d.setDate(d.getDate() + 7)
-    else d.setMonth(d.getMonth() + 1)
-    setSelectedDate(d.toISOString().split("T")[0])
-  }
-
-  const isCurrentPeriod = todayBusinessDate >= periodStart && todayBusinessDate <= periodEnd
-
-  const periodLabel = (() => {
-    if (periodType === "day") {
-      return new Date(selectedDate + "T12:00:00").toLocaleDateString("ja-JP", {
-        year: "numeric", month: "long", day: "numeric", weekday: "long",
-      })
-    }
-    if (periodType === "week") {
-      const s = new Date(periodStart + "T12:00:00")
-      const e = new Date(periodEnd + "T12:00:00")
-      return `${s.toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" })} 〜 ${e.toLocaleDateString("ja-JP", { month: "long", day: "numeric" })}`
-    }
-    return new Date(selectedDate + "T12:00:00").toLocaleDateString("ja-JP", { year: "numeric", month: "long" })
-  })()
-
-  const currentPeriodBadge = isCurrentPeriod
-    ? periodType === "day" ? "本日" : periodType === "week" ? "今週" : "今月"
-    : null
-
-  const periodPayments = payments.filter(
-    (p) => p.businessDate >= periodStart && p.businessDate <= periodEnd,
-  )
-  const activePayments = periodPayments.filter((p) => !p.canceledAt)
+  const activePayments = payments.filter((p) => !p.canceledAt)
   const totalSales = activePayments.reduce((sum, p) => sum + p.totalAmount, 0)
   const cashSales = activePayments.reduce((sum, p) => sum + p.cashAmount, 0)
   const cashlessSales = activePayments.reduce((sum, p) => sum + p.cashlessAmount, 0)
@@ -724,6 +657,36 @@ export function AdminReport({
       hour: "2-digit",
       minute: "2-digit",
     })
+
+  const handleExportCSV = () => {
+    const headers = [
+      "会計ID", "営業日", "会計日時", "税抜小計", "割引額", "税額",
+      "合計", "現金", "クレペイ", "客数", "備考",
+    ]
+    const rows = activePayments.map((p) => [
+      p.id,
+      p.businessDate,
+      formatDatetime(p.paymentDatetime),
+      p.subtotalAmount,
+      p.discountAmount,
+      p.taxAmount,
+      p.totalAmount,
+      p.cashAmount,
+      p.cashlessAmount,
+      p.guestCount,
+      p.note ?? "",
+    ])
+    const csv = [headers, ...rows]
+      .map((r) => r.map((v) => `"${v}"`).join(","))
+      .join("\n")
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `日計_${new Date().toISOString().split("T")[0]}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const tabs: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     { id: "daily", label: "日計", icon: <TrendingUp className="h-4 w-4" /> },
@@ -765,51 +728,21 @@ export function AdminReport({
                     <div>
                       <CardTitle className="flex items-center gap-2">
                         <TrendingUp className="h-5 w-5 text-primary" />
-                        {periodType === "day" ? "日次レポート" : periodType === "week" ? "週次レポート" : "月次レポート"}
+                        日次レポート
                       </CardTitle>
                       <CardDescription>
-                        {periodLabel}
-                        {currentPeriodBadge && (
-                          <span className="ml-2 rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-                            {currentPeriodBadge}
-                          </span>
-                        )}
+                        {new Date().toLocaleDateString("ja-JP", {
+                          year: "numeric",
+                          month: "long",
+                          day: "numeric",
+                          weekday: "long",
+                        })}
                       </CardDescription>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <select
-                        className="h-8 rounded-md border border-border bg-background px-2 text-sm"
-                        value={periodType}
-                        onChange={(e) => setPeriodType(e.target.value as PeriodType)}
-                      >
-                        <option value="day">1日</option>
-                        <option value="week">1週間</option>
-                        <option value="month">1か月</option>
-                      </select>
-                      <div className="flex items-center rounded-md border border-border">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-r-none" onClick={handlePrev}>
-                          <ChevronLeft className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 rounded-none px-2 text-xs"
-                          onClick={() => setSelectedDate(todayBusinessDate)}
-                          disabled={isCurrentPeriod}
-                        >
-                          今日
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-l-none"
-                          onClick={handleNext}
-                          disabled={isCurrentPeriod}
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
+                    <Button variant="outline" size="sm" onClick={handleExportCSV}>
+                      <Download className="mr-1 h-4 w-4" />
+                      CSV出力
+                    </Button>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -886,16 +819,16 @@ export function AdminReport({
                     <Receipt className="h-5 w-5 text-primary" />
                     会計履歴
                   </CardTitle>
-                  <CardDescription>{periodLabel}の会計済み一覧</CardDescription>
+                  <CardDescription>本日の会計済み一覧</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {periodPayments.length === 0 ? (
+                  {payments.length === 0 ? (
                     <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border">
-                      <p className="text-muted-foreground">この期間の会計記録はありません</p>
+                      <p className="text-muted-foreground">会計済みの記録はありません</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {periodPayments.map((payment) => (
+                      {payments.map((payment) => (
                         <div
                           key={payment.id}
                           className={cn(
