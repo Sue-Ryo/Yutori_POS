@@ -31,15 +31,15 @@ interface FloorMapProps {
 
 const statusColors: Record<string, string> = {
   empty: "bg-table-empty hover:bg-table-empty/80",
+  reserved: "bg-table-reserved hover:bg-table-reserved/80",
   occupied: "bg-table-occupied hover:bg-table-occupied/80",
-  waiting: "bg-table-waiting hover:bg-table-waiting/80",
   checked_out: "bg-table-checked-out hover:bg-table-checked-out/80",
 }
 
 const statusLabels: Record<string, string> = {
   empty: "空席",
+  reserved: "予約",
   occupied: "使用中",
-  waiting: "提供待ち",
   checked_out: "会計済",
 }
 
@@ -83,7 +83,7 @@ export function FloorMap({
 
   // 連結モード中に選択不可なブロック（会計済・すでに連結サブ席）
   const isUnselectable = (block: ServiceBlock) =>
-    block.status === "checked_out" || linkedSecondaryIds.has(block.id)
+    block.status === "checked_out" || block.status === "reserved" || linkedSecondaryIds.has(block.id)
 
   // 席移動モード中の選択可否
   const isMoveUnselectable = (block: ServiceBlock): boolean => {
@@ -102,30 +102,6 @@ export function FloorMap({
 
   return (
     <div className="relative h-full w-full overflow-auto rounded-lg border border-border bg-card p-4">
-      {/* 凡例 */}
-      <div className="absolute right-4 top-4 flex gap-3 rounded-md bg-muted/50 px-3 py-2 text-xs z-10">
-        <div className="flex items-center gap-2">
-          <div className="h-3 w-3 rounded bg-table-empty" />
-          <span className="text-muted-foreground">空席</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="h-3 w-3 rounded bg-table-occupied" />
-          <span className="text-muted-foreground">使用中</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="h-3 w-3 rounded bg-table-waiting" />
-          <span className="text-muted-foreground">提供待ち</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="h-3 w-3 rounded bg-table-checked-out" />
-          <span className="text-muted-foreground">会計済</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link2 className="h-3 w-3 text-info" />
-          <span className="text-muted-foreground">連結中</span>
-        </div>
-      </div>
-
       {/* Grid background */}
       <div
         className="absolute inset-0 opacity-10"
@@ -275,13 +251,12 @@ export function FloorMap({
           </Button>
         </div>
       ) : (
-        <div className="absolute bottom-4 left-4 flex items-center gap-3">
-          <span className="text-xs text-muted-foreground">タップでブロック操作</span>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={onEnterLinkMode}>
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center divide-x divide-border rounded-lg border border-border bg-card/95 shadow-md overflow-hidden">
+          <Button size="sm" variant="ghost" className="gap-1.5 rounded-none px-4" onClick={onEnterLinkMode}>
             <Link2 className="h-3.5 w-3.5" />
             席を連結
           </Button>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={onEnterMoveMode}>
+          <Button size="sm" variant="ghost" className="gap-1.5 rounded-none px-4" onClick={onEnterMoveMode}>
             <ArrowRightLeft className="h-3.5 w-3.5" />
             席移動
           </Button>

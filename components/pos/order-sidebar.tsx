@@ -33,6 +33,7 @@ import {
   ShoppingCart,
   Zap,
   CheckCheck,
+  CalendarClock,
 } from "lucide-react"
 
 const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "ドリンク"]
@@ -52,6 +53,7 @@ interface OrderSidebarProps {
   onCheckout: (sessionId: string, data: CheckoutData) => void
   onUnlinkBlock: (sessionId: string, blockIdToUnlink: string) => void
   onBussingComplete: () => void
+  onToggleReserved: () => void
 }
 
 export function OrderSidebar({
@@ -67,6 +69,7 @@ export function OrderSidebar({
   onCheckout,
   onUnlinkBlock,
   onBussingComplete,
+  onToggleReserved,
 }: OrderSidebarProps) {
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({})
@@ -132,17 +135,16 @@ export function OrderSidebar({
       ? unpaidItems.filter((i) => selectedItemIds.includes(i.id))
       : unpaidItems
 
-  // ハッピーアワー計算（1人ずつ処理）
+  // ハッピーアワー計算
+  // 基本: 3000 × 人数、ドリンク合計が600超なら超過分を加算
   const drinkSubtotal = targetItems
     .filter((i) => productCategoryMap[i.productId] === "ドリンク")
     .reduce((sum, i) => sum + i.subtotal, 0)
   const nonHhSubtotal = targetItems
     .filter((i) => !HAPPY_HOUR_CATEGORIES.includes(productCategoryMap[i.productId] ?? ""))
     .reduce((sum, i) => sum + i.subtotal, 0)
-  const drinkPerPerson = guestCount > 0 ? drinkSubtotal / guestCount : 0
-  const drinkOveragePerPerson = Math.max(0, drinkPerPerson - DRINK_THRESHOLD)
-  const hhPerPerson = HAPPY_HOUR_BASE + drinkOveragePerPerson
-  const happyHourCharge = Math.round(hhPerPerson * guestCount)
+  const drinkOverage = Math.max(0, drinkSubtotal - DRINK_THRESHOLD)
+  const happyHourCharge = HAPPY_HOUR_BASE * guestCount + drinkOverage
 
   const subtotal = happyHour
     ? happyHourCharge + nonHhSubtotal
@@ -429,6 +431,25 @@ export function OrderSidebar({
 
         {/* 注文内容エリア */}
         <div className="flex-1 overflow-y-auto p-4">
+          {/* 予約トグルボタン（空席・予約時のみ） */}
+          {(selectedBlock.status === "empty" || selectedBlock.status === "reserved") && !session && (
+            <div className="mb-4">
+              <Button
+                variant="outline"
+                className={cn(
+                  "w-full gap-2",
+                  selectedBlock.status === "reserved"
+                    ? "border-purple-400 bg-purple-50 text-purple-700 hover:bg-purple-100"
+                    : "border-muted-foreground/40 text-muted-foreground hover:text-foreground",
+                )}
+                onClick={onToggleReserved}
+              >
+                <CalendarClock className="h-4 w-4" />
+                {selectedBlock.status === "reserved" ? "予約解除" : "予約にする"}
+              </Button>
+            </div>
+          )}
+
           {/* オーダー追加ボタン */}
           <div className="mb-4">
             <div className="mb-2 flex items-center justify-between">
@@ -450,114 +471,153 @@ export function OrderSidebar({
           </div>
 
           {/* 注文リスト */}
-          {unpaidItems.length > 0 ? (
-            <div className="space-y-2">
-              {unpaidItems.map((item) => (
-                <div
-                  key={item.id}
-                  className={cn(
-                    "rounded-lg border border-border p-3 transition-colors",
-                    splitMode && selectedItemIds.includes(item.id) && "border-primary bg-primary/10",
-                  )}
-                  onClick={() => splitMode && handleSplitToggle(item.id)}
-                >
-                  <div className="flex items-start gap-2">
-                    {splitMode && (
-                      <input
-                        type="checkbox"
-                        checked={selectedItemIds.includes(item.id)}
-                        onChange={() => handleSplitToggle(item.id)}
-                        className="mt-0.5 h-4 w-4"
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="truncate font-medium text-sm">{item.name}</p>
-                        <span className="whitespace-nowrap text-xs text-muted-foreground">
-                          {formatTime(item.orderedAt)}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        ¥{item.price.toLocaleString()} × {item.quantity} = ¥
-                        {item.subtotal.toLocaleString()}
-                      </p>
-                      {editingMemoId === item.id ? (
-                        <div className="mt-1 flex gap-1" onClick={(e) => e.stopPropagation()}>
-                          <Input
-                            autoFocus
-                            defaultValue={item.optionMemo ?? ""}
-                            placeholder="例: 氷少なめ"
-                            className="h-7 text-xs"
-                            onBlur={(e) => {
-                              handleUpdateMemo(item.id, e.target.value)
-                              setEditingMemoId(null)
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                handleUpdateMemo(item.id, e.currentTarget.value)
-                                setEditingMemoId(null)
-                              }
-                            }}
-                          />
-                        </div>
-                      ) : (
-                        <button
-                          className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            setEditingMemoId(item.id)
-                          }}
-                        >
-                          <MessageSquare className="h-2.5 w-2.5" />
-                          {item.optionMemo ? item.optionMemo : "メモ追加"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
+          {(() => {
+            if (unpaidItems.length === 0) {
+              return (
+                <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border">
+                  <p className="text-sm text-muted-foreground">注文がありません</p>
+                </div>
+              )
+            }
 
-                  <div
-                    className="mt-2 flex items-center justify-between gap-2"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => handleQuantityChange(item.id, -1)}
-                      >
-                        <Minus className="h-3 w-3" />
-                      </Button>
-                      <span className="w-6 text-center font-bold text-sm">{item.quantity}</span>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-7 w-7"
-                        onClick={() => handleQuantityChange(item.id, 1)}
-                      >
-                        <Plus className="h-3 w-3" />
-                      </Button>
+            // 元席ラベルがある場合はセクション分け
+            const hasOrigins = unpaidItems.some((i) => i.originBlockId)
+            const groups: { blockId: string; label: string; items: typeof unpaidItems }[] =
+              hasOrigins
+                ? Array.from(
+                    unpaidItems.reduce((map, item) => {
+                      const key = item.originBlockId ?? session?.blockId ?? ""
+                      if (!map.has(key)) map.set(key, [])
+                      map.get(key)!.push(item)
+                      return map
+                    }, new Map<string, typeof unpaidItems>()),
+                  ).map(([blockId, items]) => ({
+                    blockId,
+                    label: blocks.find((b) => b.id === blockId)?.name ?? blockId,
+                    items,
+                  }))
+                : [{ blockId: "", label: "", items: unpaidItems }]
+
+            const renderItem = (item: (typeof unpaidItems)[0]) => (
+              <div
+                key={item.id}
+                className={cn(
+                  "rounded-lg border border-border p-3 transition-colors",
+                  splitMode && selectedItemIds.includes(item.id) && "border-primary bg-primary/10",
+                )}
+                onClick={() => splitMode && handleSplitToggle(item.id)}
+              >
+                <div className="flex items-start gap-2">
+                  {splitMode && (
+                    <input
+                      type="checkbox"
+                      checked={selectedItemIds.includes(item.id)}
+                      onChange={() => handleSplitToggle(item.id)}
+                      className="mt-0.5 h-4 w-4"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate font-medium text-sm">{item.name}</p>
+                      <span className="whitespace-nowrap text-xs text-muted-foreground">
+                        {formatTime(item.orderedAt)}
+                      </span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-destructive hover:text-destructive"
-                        onClick={() => handleCancelItem(item.id)}
+                    <p className="text-xs text-muted-foreground">
+                      ¥{item.price.toLocaleString()} × {item.quantity} = ¥
+                      {item.subtotal.toLocaleString()}
+                    </p>
+                    {editingMemoId === item.id ? (
+                      <div className="mt-1 flex gap-1" onClick={(e) => e.stopPropagation()}>
+                        <Input
+                          autoFocus
+                          defaultValue={item.optionMemo ?? ""}
+                          placeholder="例: 氷少なめ"
+                          className="h-7 text-xs"
+                          onBlur={(e) => {
+                            handleUpdateMemo(item.id, e.target.value)
+                            setEditingMemoId(null)
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              handleUpdateMemo(item.id, e.currentTarget.value)
+                              setEditingMemoId(null)
+                            }
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setEditingMemoId(item.id)
+                        }}
                       >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
+                        <MessageSquare className="h-2.5 w-2.5" />
+                        {item.optionMemo ? item.optionMemo : "メモ追加"}
+                      </button>
+                    )}
                   </div>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border">
-              <p className="text-sm text-muted-foreground">注文がありません</p>
-            </div>
-          )}
+
+                <div
+                  className="mt-2 flex items-center justify-between gap-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => handleQuantityChange(item.id, -1)}
+                    >
+                      <Minus className="h-3 w-3" />
+                    </Button>
+                    <span className="w-6 text-center font-bold text-sm">{item.quantity}</span>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => handleQuantityChange(item.id, 1)}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-destructive hover:text-destructive"
+                      onClick={() => handleCancelItem(item.id)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )
+
+            return (
+              <div className="space-y-3">
+                {groups.map((group) => (
+                  <div key={group.blockId || "default"}>
+                    {hasOrigins && (
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <div className="h-px flex-1 bg-border" />
+                        <span className="rounded-full bg-muted px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                          {group.label}
+                        </span>
+                        <div className="h-px flex-1 bg-border" />
+                      </div>
+                    )}
+                    <div className="space-y-2">{group.items.map(renderItem)}</div>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
         </div>
 
         {/* 会計エリア */}
@@ -575,7 +635,7 @@ export function OrderSidebar({
             onClick={() => setHappyHour(!happyHour)}
           >
             <Zap className={cn("mr-1.5 h-4 w-4", happyHour && "fill-white")} />
-            {happyHour ? `ハッピーアワー適用中 (¥${Math.round(hhPerPerson).toLocaleString()}/人)` : "ハッピーアワー"}
+            {happyHour ? `ハッピーアワー適用中 (¥${(HAPPY_HOUR_BASE * guestCount + drinkOverage).toLocaleString()})` : "ハッピーアワー"}
           </Button>
 
           <div className="flex gap-2">
@@ -618,10 +678,10 @@ export function OrderSidebar({
                   <span>HH基本 (¥{HAPPY_HOUR_BASE.toLocaleString()} × {guestCount}名)</span>
                   <span>¥{(HAPPY_HOUR_BASE * guestCount).toLocaleString()}</span>
                 </div>
-                {drinkOveragePerPerson > 0 && (
+                {drinkOverage > 0 && (
                   <div className="flex justify-between text-amber-600 dark:text-amber-400">
-                    <span>ドリンク超過 (+¥{Math.round(drinkOveragePerPerson).toLocaleString()}/人 × {guestCount}名)</span>
-                    <span>¥{Math.round(drinkOveragePerPerson * guestCount).toLocaleString()}</span>
+                    <span>ドリンク超過 (+¥{drinkOverage.toLocaleString()})</span>
+                    <span>¥{drinkOverage.toLocaleString()}</span>
                   </div>
                 )}
                 {nonHhSubtotal > 0 && (

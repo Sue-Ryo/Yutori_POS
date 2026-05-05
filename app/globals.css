@@ -27,7 +27,7 @@
   /* Table states */
   --table-empty: oklch(0.35 0 0);
   --table-occupied: oklch(0.55 0.18 25);
-  --table-waiting: oklch(0.7 0.15 70);
+  --table-reserved: oklch(0.62 0.14 290);
   --table-checked-out: oklch(0.55 0.15 250);
   /* Status colors */
   --success: oklch(0.7 0.15 160);
@@ -78,7 +78,7 @@
   --color-chart-5: var(--chart-5);
   --color-table-empty: var(--table-empty);
   --color-table-occupied: var(--table-occupied);
-  --color-table-waiting: var(--table-waiting);
+  --color-table-reserved: var(--table-reserved);
   --color-table-checked-out: var(--table-checked-out);
   --color-success: var(--success);
   --color-warning: var(--warning);

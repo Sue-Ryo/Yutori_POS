@@ -1,4 +1,4 @@
-export type BlockStatus = "empty" | "occupied" | "waiting" | "checked_out"
+export type BlockStatus = "empty" | "reserved" | "occupied" | "checked_out"
 export type BlockType = "chair" | "sofa" | "counter" | "private_room" | "wall" | "counter_equipment" | "passage"
 export type ServingStatus = "unserved" | "served"
 export type DiscountType = "amount" | "rate"
@@ -31,6 +31,7 @@ export interface OrderItem {
   orderedAt: Date
   isPaid: boolean
   paidAt?: Date
+  originBlockId?: string  // 連結時に元席を識別するID
 }
 
 export interface Product {

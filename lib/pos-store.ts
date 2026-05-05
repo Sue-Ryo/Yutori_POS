@@ -59,7 +59,7 @@ export const initialBlocks: ServiceBlock[] = [
     width: 120,
     height: 80,
     rotation: 0,
-    status: "waiting",
+    status: "occupied",
     capacity: 2,
     startedAt: new Date(Date.now() - 30 * 60000),
   },
