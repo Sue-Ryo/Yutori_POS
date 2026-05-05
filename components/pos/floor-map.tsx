@@ -68,6 +68,7 @@ export function FloorMap({
 }: FloorMapProps) {
   const [now, setNow] = useState(new Date())
   const lastTapRef = useRef<{ blockId: string; time: number } | null>(null)
+  const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60000)
@@ -179,14 +180,26 @@ export function FloorMap({
             ? () => { if (!moveUnselectable) onMoveBlockSelect(block.id) }
             : () => {
                 if (block.status === "checked_out") {
-                  const now = Date.now()
+                  const tapTime = Date.now()
                   const last = lastTapRef.current
-                  if (last && last.blockId === block.id && now - last.time < 300) {
+                  if (last && last.blockId === block.id && tapTime - last.time < 300) {
+                    // ダブルタップ：タイマーをキャンセルしてバッシング実行
+                    if (singleTapTimerRef.current) {
+                      clearTimeout(singleTapTimerRef.current)
+                      singleTapTimerRef.current = null
+                    }
                     lastTapRef.current = null
                     onDoubleTapBussing(block.id)
                     return
                   }
-                  lastTapRef.current = { blockId: block.id, time: now }
+                  // 1回目タップ：タイマーで待ち、2回目が来なければサイドバーを開く
+                  lastTapRef.current = { blockId: block.id, time: tapTime }
+                  singleTapTimerRef.current = setTimeout(() => {
+                    singleTapTimerRef.current = null
+                    lastTapRef.current = null
+                    onBlockClick(block.id)
+                  }, 300)
+                  return
                 }
                 onBlockClick(block.id)
               }
