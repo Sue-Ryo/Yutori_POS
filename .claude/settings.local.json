@@ -10,7 +10,8 @@
       "Bash(npx tsc *)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\" -Recurse -Force)",
       "Bash(Select-Object -First 50)",
-      "Bash(Format-Table -AutoSize)"
+      "Bash(Format-Table -AutoSize)",
+      "Bash(python3 *)"
     ]
   }
 }

@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState } from "react"
 import { cn } from "@/lib/utils"
@@ -22,7 +22,6 @@ import {
   Receipt,
   Undo2,
   Calculator,
-  Download,
   Store,
   BarChart2,
   Package,
@@ -36,8 +35,16 @@ import {
   ToggleLeft,
   ToggleRight,
 } from "lucide-react"
+import { getBusinessDate } from "@/lib/pos-store"
 
 type AdminTab = "daily" | "products" | "coupons" | "settings"
+type Period = "day" | "week" | "month"
+
+const PERIOD_OPTIONS: { id: Period; label: string }[] = [
+  { id: "day", label: "1日" },
+  { id: "week", label: "1週間" },
+  { id: "month", label: "1か月" },
+]
 
 interface AdminReportProps {
   payments: Payment[]
@@ -638,10 +645,26 @@ export function AdminReport({
   onUpdateCoupons,
 }: AdminReportProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("daily")
+  const [period, setPeriod] = useState<Period>("day")
   const [expenses, setExpenses] = useState(0)
   const [handoverNote, setHandoverNote] = useState("")
 
-  const activePayments = payments.filter((p) => !p.canceledAt)
+  const todayBD = getBusinessDate(new Date(), settings.businessDayStartTime)
+
+  const periodStart = (() => {
+    if (period === "day") return todayBD
+    const d = new Date()
+    d.setDate(d.getDate() - (period === "week" ? 6 : 29))
+    return getBusinessDate(d, settings.businessDayStartTime)
+  })()
+
+  const periodLabel = period === "day" ? "本日" : period === "week" ? "過去7日間" : "過去30日間"
+
+  const periodPayments = payments.filter((p) =>
+    period === "day" ? p.businessDate === todayBD : p.businessDate >= periodStart && p.businessDate <= todayBD
+  )
+
+  const activePayments = periodPayments.filter((p) => !p.canceledAt)
   const totalSales = activePayments.reduce((sum, p) => sum + p.totalAmount, 0)
   const cashSales = activePayments.reduce((sum, p) => sum + p.cashAmount, 0)
   const cashlessSales = activePayments.reduce((sum, p) => sum + p.cashlessAmount, 0)
@@ -658,35 +681,6 @@ export function AdminReport({
       minute: "2-digit",
     })
 
-  const handleExportCSV = () => {
-    const headers = [
-      "会計ID", "営業日", "会計日時", "税抜小計", "割引額", "税額",
-      "合計", "現金", "クレペイ", "客数", "備考",
-    ]
-    const rows = activePayments.map((p) => [
-      p.id,
-      p.businessDate,
-      formatDatetime(p.paymentDatetime),
-      p.subtotalAmount,
-      p.discountAmount,
-      p.taxAmount,
-      p.totalAmount,
-      p.cashAmount,
-      p.cashlessAmount,
-      p.guestCount,
-      p.note ?? "",
-    ])
-    const csv = [headers, ...rows]
-      .map((r) => r.map((v) => `"${v}"`).join(","))
-      .join("\n")
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = `日計_${new Date().toISOString().split("T")[0]}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-  }
 
   const tabs: { id: AdminTab; label: string; icon: React.ReactNode }[] = [
     { id: "daily", label: "日計", icon: <TrendingUp className="h-4 w-4" /> },
@@ -724,25 +718,33 @@ export function AdminReport({
             <>
               <Card>
                 <CardHeader>
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
                       <CardTitle className="flex items-center gap-2">
                         <TrendingUp className="h-5 w-5 text-primary" />
-                        日次レポート
+                        レポート
                       </CardTitle>
-                      <CardDescription>
-                        {new Date().toLocaleDateString("ja-JP", {
-                          year: "numeric",
-                          month: "long",
-                          day: "numeric",
-                          weekday: "long",
-                        })}
-                      </CardDescription>
+                      <CardDescription>{periodLabel}</CardDescription>
                     </div>
-                    <Button variant="outline" size="sm" onClick={handleExportCSV}>
-                      <Download className="mr-1 h-4 w-4" />
-                      CSV出力
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <div className="flex overflow-hidden rounded-md border border-border">
+                        {PERIOD_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            className={cn(
+                              "px-3 py-1.5 text-xs font-medium transition-colors",
+                              period === opt.id
+                                ? "bg-primary text-primary-foreground"
+                                : "text-muted-foreground hover:bg-muted",
+                            )}
+                            onClick={() => setPeriod(opt.id)}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -819,16 +821,16 @@ export function AdminReport({
                     <Receipt className="h-5 w-5 text-primary" />
                     会計履歴
                   </CardTitle>
-                  <CardDescription>本日の会計済み一覧</CardDescription>
+                  <CardDescription>{periodLabel}の会計済み一覧</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {payments.length === 0 ? (
+                  {periodPayments.length === 0 ? (
                     <div className="flex h-32 items-center justify-center rounded-lg border border-dashed border-border">
                       <p className="text-muted-foreground">会計済みの記録はありません</p>
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {payments.map((payment) => (
+                      {periodPayments.map((payment) => (
                         <div
                           key={payment.id}
                           className={cn(
