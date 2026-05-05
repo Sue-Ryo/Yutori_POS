@@ -30,7 +30,14 @@ import {
   saveObject,
   revivers,
 } from "@/lib/pos-storage"
+import { supabase } from "@/lib/supabase"
 import { fetchProducts, createProduct, updateProduct, deleteProduct } from "@/lib/api/products"
+import { fetchBlocks, upsertBlocks, syncBlocks } from "@/lib/api/blocks"
+import { fetchSessions, upsertSessions } from "@/lib/api/sessions"
+import { fetchPayments, upsertPayments } from "@/lib/api/payments-db"
+import { fetchSettings, upsertSettings } from "@/lib/api/settings-db"
+import { fetchCoupons, syncCoupons } from "@/lib/api/coupons-db"
+import { fetchLayoutElements, upsertLayoutElements } from "@/lib/api/layout-db"
 import { FloorMap } from "./floor-map"
 import { OrderSidebar } from "./order-sidebar"
 import { LayoutEditor } from "./layout-editor"
@@ -56,24 +63,98 @@ export function POSSystem() {
   const [coupons, setCoupons] = useState<Coupon[]>(initialCoupons)
   const [dbLoading, setDbLoading] = useState(false)
   const [dbError, setDbError] = useState<string | null>(null)
+  const dbSyncingRef = useRef(false)
 
-  // Supabase から商品データを取得
-  const loadProductsFromDB = useCallback(() => {
+  // Supabase から全データを取得
+  const loadAllFromDB = useCallback(async () => {
     setDbLoading(true)
-    return fetchProducts()
-      .then((fetchedProducts) => {
-        console.log(`[POSSystem] DB商品数: ${fetchedProducts.length}`)
-        setProducts(fetchedProducts) // 0件でも上書き（初期サンプルをクリア）
-      })
-      .catch((err) => {
-        console.error("商品データ取得エラー:", err)
-        setDbError("商品データの取得に失敗しました")
-      })
-      .finally(() => setDbLoading(false))
+    dbSyncingRef.current = true
+    try {
+      const [
+        dbBlocks, dbSessions, dbPayments,
+        dbSettings, dbCoupons, dbElements, dbProducts,
+      ] = await Promise.all([
+        fetchBlocks().catch((e) => { console.error("[DB]blocks fetch:", e); return [] as ServiceBlock[] }),
+        fetchSessions().catch((e) => { console.error("[DB]sessions fetch:", e); return [] as BlockSession[] }),
+        fetchPayments().catch((e) => { console.error("[DB]payments fetch:", e); return [] as Payment[] }),
+        fetchSettings().catch((e) => { console.error("[DB]settings fetch:", e); return null }),
+        fetchCoupons().catch((e) => { console.error("[DB]coupons fetch:", e); return [] as Coupon[] }),
+        fetchLayoutElements().catch((e) => { console.error("[DB]layout fetch:", e); return [] as LayoutElement[] }),
+        fetchProducts().catch((e) => { console.error("[DB]products fetch:", e); return [] as Product[] }),
+      ])
+      if (dbBlocks.length > 0) setBlocks(dbBlocks)
+      if (dbSessions.length > 0) setSessions(dbSessions)
+      if (dbPayments.length > 0) setPayments(dbPayments)
+      if (dbSettings) setSettings(dbSettings)
+      if (dbCoupons.length > 0) setCoupons(dbCoupons)
+      if (dbElements.length > 0) setLayoutElements(dbElements)
+      setProducts(dbProducts)
+      console.log("[POSSystem] DB読み込み完了")
+    } catch (err) {
+      console.error("DB読み込みエラー:", err)
+      setDbError("データの取得に失敗しました（ローカルデータを使用）")
+    } finally {
+      setDbLoading(false)
+      setTimeout(() => { dbSyncingRef.current = false }, 300)
+    }
   }, [])
 
   useEffect(() => {
-    loadProductsFromDB()
+    loadAllFromDB()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 他端末の変更をリアルタイム受信
+  useEffect(() => {
+    const channel = supabase
+      .channel("pos_realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "blocks" }, () => {
+        fetchBlocks().then((data) => {
+          dbSyncingRef.current = true
+          setBlocks(data)
+          setTimeout(() => { dbSyncingRef.current = false }, 300)
+        }).catch((e) => console.error("[RT]blocks:", e))
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "sessions" }, () => {
+        fetchSessions().then((data) => {
+          dbSyncingRef.current = true
+          setSessions(data)
+          setTimeout(() => { dbSyncingRef.current = false }, 300)
+        }).catch((e) => console.error("[RT]sessions:", e))
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, () => {
+        fetchPayments().then((data) => {
+          dbSyncingRef.current = true
+          setPayments(data)
+          setTimeout(() => { dbSyncingRef.current = false }, 300)
+        }).catch((e) => console.error("[RT]payments:", e))
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "layout_elements" }, () => {
+        fetchLayoutElements().then((data) => {
+          dbSyncingRef.current = true
+          setLayoutElements(data)
+          setTimeout(() => { dbSyncingRef.current = false }, 300)
+        }).catch((e) => console.error("[RT]layout_elements:", e))
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "pos_settings" }, () => {
+        fetchSettings().then((data) => {
+          if (data) {
+            dbSyncingRef.current = true
+            setSettings(data)
+            setTimeout(() => { dbSyncingRef.current = false }, 300)
+          }
+        }).catch((e) => console.error("[RT]pos_settings:", e))
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, () => {
+        fetchCoupons().then((data) => {
+          dbSyncingRef.current = true
+          setCoupons(data)
+          setTimeout(() => { dbSyncingRef.current = false }, 300)
+        }).catch((e) => console.error("[RT]coupons:", e))
+      })
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -85,6 +166,32 @@ export function POSSystem() {
   useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.payments, payments) }, [payments])
   useEffect(() => { if (initializedRef.current) saveObject(STORAGE_KEYS.settings, settings) }, [settings])
   useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.coupons, coupons) }, [coupons])
+
+  // 状態変化時に Supabase へ同期（DB読み込み中は除外）
+  useEffect(() => {
+    if (!initializedRef.current || dbSyncingRef.current) return
+    upsertBlocks(blocks).catch((e) => console.error("[DB]blocks:", e))
+  }, [blocks])
+  useEffect(() => {
+    if (!initializedRef.current || dbSyncingRef.current) return
+    upsertLayoutElements(layoutElements).catch((e) => console.error("[DB]layout:", e))
+  }, [layoutElements])
+  useEffect(() => {
+    if (!initializedRef.current || dbSyncingRef.current) return
+    upsertSessions(sessions).catch((e) => console.error("[DB]sessions:", e))
+  }, [sessions])
+  useEffect(() => {
+    if (!initializedRef.current || dbSyncingRef.current) return
+    upsertPayments(payments).catch((e) => console.error("[DB]payments:", e))
+  }, [payments])
+  useEffect(() => {
+    if (!initializedRef.current || dbSyncingRef.current) return
+    upsertSettings(settings).catch((e) => console.error("[DB]settings:", e))
+  }, [settings])
+  useEffect(() => {
+    if (!initializedRef.current || dbSyncingRef.current) return
+    syncCoupons(coupons).catch((e) => console.error("[DB]coupons:", e))
+  }, [coupons])
 
   // localStorage から読み込む（クライアントサイドのみ・save effectsより後に定義すること）
   useEffect(() => {
@@ -432,6 +539,8 @@ export function POSSystem() {
       setBlocks(newBlocks)
       setLayoutElements(newElements)
       setActiveTab("map")
+      // レイアウト保存時は削除も含む完全同期
+      syncBlocks(newBlocks).catch((e) => console.error("[DB]syncBlocks:", e))
     },
     []
   )
@@ -520,9 +629,9 @@ export function POSSystem() {
             variant="ghost"
             size="sm"
             className="gap-2"
-            onClick={loadProductsFromDB}
+            onClick={loadAllFromDB}
             disabled={dbLoading}
-            title="商品データを再読み込み"
+            title="全データを再読み込み"
           >
             <RefreshCw className={cn("h-4 w-4", dbLoading && "animate-spin")} />
             <span className="hidden sm:inline text-xs">更新</span>
