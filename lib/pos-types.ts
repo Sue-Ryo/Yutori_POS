@@ -21,6 +21,7 @@ export interface ServiceBlock {
 export interface OrderItem {
   id: string
   productId: string
+  category?: string
   name: string
   price: number
   quantity: number

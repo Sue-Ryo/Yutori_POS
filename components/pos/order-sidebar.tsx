@@ -134,12 +134,14 @@ export function OrderSidebar({
       ? unpaidItems.filter((i) => selectedItemIds.includes(i.id))
       : unpaidItems
 
-  // ハッピーアワー計算（1人ずつ処理）
+  // ハッピーアワー計算（item.category を優先、なければ productCategoryMap にフォールバック）
+  const itemCategory = (i: { productId: string; category?: string }) =>
+    i.category ?? productCategoryMap[i.productId] ?? ""
   const drinkSubtotal = targetItems
-    .filter((i) => productCategoryMap[i.productId] === "ドリンク")
+    .filter((i) => itemCategory(i) === "ドリンク")
     .reduce((sum, i) => sum + i.subtotal, 0)
   const nonHhSubtotal = targetItems
-    .filter((i) => !HAPPY_HOUR_CATEGORIES.includes(productCategoryMap[i.productId] ?? ""))
+    .filter((i) => !HAPPY_HOUR_CATEGORIES.includes(itemCategory(i)))
     .reduce((sum, i) => sum + i.subtotal, 0)
   const drinkPerPerson = guestCount > 0 ? drinkSubtotal / guestCount : 0
   const drinkOveragePerPerson = Math.max(0, drinkPerPerson - DRINK_THRESHOLD)
@@ -239,6 +241,7 @@ export function OrderSidebar({
         const newItem: OrderItem = {
           id: `i-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           productId,
+          category: product.category,
           name: product.name,
           price: product.price,
           quantity,
@@ -480,7 +483,7 @@ export function OrderSidebar({
                           {formatTime(item.orderedAt)}
                         </span>
                       </div>
-                      {happyHour && HAPPY_HOUR_CATEGORIES.includes(productCategoryMap[item.productId] ?? "") ? (
+                      {happyHour && HAPPY_HOUR_CATEGORIES.includes(itemCategory(item)) ? (
                         <p className="flex items-center gap-1 text-xs">
                           <span className="line-through text-muted-foreground/50">
                             ¥{item.price.toLocaleString()} × {item.quantity} = ¥{item.subtotal.toLocaleString()}
