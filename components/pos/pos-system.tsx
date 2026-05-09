@@ -213,6 +213,7 @@ export function POSSystem() {
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [happyHourByBlock, setHappyHourByBlock] = useState<Record<string, boolean>>({})
   const [linkMode, setLinkMode] = useState(false)
   const [linkSelection, setLinkSelection] = useState<string[]>([])
   const [moveMode, setMoveMode] = useState(false)
@@ -223,6 +224,12 @@ export function POSSystem() {
   const currentSession = selectedBlockId
     ? sessions.find((s) => s.blockId === selectedBlockId && !s.endedAt) ?? null
     : null
+
+  const currentHappyHour = selectedBlockId ? (happyHourByBlock[selectedBlockId] ?? false) : false
+  const handleHappyHourChange = useCallback((value: boolean) => {
+    if (!selectedBlockId) return
+    setHappyHourByBlock((prev) => ({ ...prev, [selectedBlockId]: value }))
+  }, [selectedBlockId])
 
   const handleBlockClick = useCallback((blockId: string) => {
     // 連結先（サブ）ブロックをクリックした場合はプライマリブロックのセッションを開く
@@ -273,15 +280,17 @@ export function POSSystem() {
       })
 
       const unpaidItems = updatedSession.orderItems.filter((i) => !i.isPaid)
-      const hasUnserved = unpaidItems.some((i) => i.servingStatus === "unserved")
       const hasItems = unpaidItems.length > 0
       const status = hasItems ? "occupied" : "empty"
+      const totalQty = unpaidItems.reduce((sum, i) => sum + i.quantity, 0)
       // プライマリ + 連結ブロック全てのステータスを更新
       const allBlockIds = [updatedSession.blockId, ...(updatedSession.linkedBlockIds ?? [])]
       setBlocks((prev) =>
         prev.map((b) => {
           if (!allBlockIds.includes(b.id)) return b
-          const startedAt = b.startedAt ?? updatedSession.startedAt
+          if (!hasItems) return { ...b, status: "empty", startedAt: undefined }
+          // 累計3オーダーに達したタイミングで初めてタイマー開始
+          const startedAt = totalQty >= 3 ? (b.startedAt ?? new Date()) : b.startedAt
           return { ...b, status, startedAt }
         })
       )
@@ -463,11 +472,11 @@ export function POSSystem() {
         linkedBlockIds: secondaryBlockIds,
       }
       setSessions((prev) => [...prev, newSession])
-      // プライマリ・サブ両方を occupied に
+      // プライマリ・サブ両方を occupied に（startedAt はオーダー3個到達時にセット）
       setBlocks((prev) =>
         prev.map((b) =>
           b.id === primaryBlockId || secondaryBlockIds.includes(b.id)
-            ? { ...b, status: "occupied", startedAt: now }
+            ? { ...b, status: "occupied" }
             : b
         )
       )
@@ -476,7 +485,7 @@ export function POSSystem() {
     setBlocks((prev) =>
       prev.map((b) =>
         secondaryBlockIds.includes(b.id)
-          ? { ...b, status: "occupied", startedAt: b.startedAt ?? now }
+          ? { ...b, status: "occupied" }
           : b
       )
     )
@@ -733,6 +742,8 @@ export function POSSystem() {
         onUnlinkBlock={handleUnlinkBlock}
         onBussingComplete={handleBussingComplete}
         onReserveBlock={handleReserveBlock}
+        happyHour={currentHappyHour}
+        onHappyHourChange={handleHappyHourChange}
       />
 
       {sidebarOpen && activeTab === "map" && (

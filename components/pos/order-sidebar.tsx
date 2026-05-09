@@ -39,6 +39,8 @@ const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "ドリンク", "
 const DRINK_CATEGORIES = ["ドリンク", "drink"]
 const HAPPY_HOUR_BASE = 3000
 const DRINK_THRESHOLD = 600
+const HH_EXCLUDED_NAMES = ["トップ替え", "アイスホース"]
+const NIGHT_CHARGE_NAME = "ナイトチャージ"
 
 interface OrderSidebarProps {
   isOpen: boolean
@@ -54,6 +56,8 @@ interface OrderSidebarProps {
   onUnlinkBlock: (sessionId: string, blockIdToUnlink: string) => void
   onBussingComplete: () => void
   onReserveBlock: (blockId: string) => void
+  happyHour: boolean
+  onHappyHourChange: (value: boolean) => void
 }
 
 export function OrderSidebar({
@@ -70,6 +74,8 @@ export function OrderSidebar({
   onUnlinkBlock,
   onBussingComplete,
   onReserveBlock,
+  happyHour,
+  onHappyHourChange,
 }: OrderSidebarProps) {
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({})
@@ -80,8 +86,8 @@ export function OrderSidebar({
   const [cashReceived, setCashReceived] = useState<string>("")
   const [guestCount, setGuestCount] = useState<number>(session?.guestCount ?? 1)
   const [editingMemoId, setEditingMemoId] = useState<string | null>(null)
+  const [showNightChargeWarning, setShowNightChargeWarning] = useState(false)
   const [noteText, setNoteText] = useState<string>(session?.note ?? "")
-  const [happyHour, setHappyHour] = useState(false)
 
   useEffect(() => {
     setNoteText(session?.note ?? "")
@@ -92,7 +98,6 @@ export function OrderSidebar({
     if (!isOpen) {
       setShowOrderModal(false)
       setPendingCounts({})
-      setHappyHour(false)
     }
   }, [isOpen])
 
@@ -138,11 +143,14 @@ export function OrderSidebar({
   // ハッピーアワー計算（item.category を優先、なければ productCategoryMap にフォールバック）
   const itemCategory = (i: { productId: string; category?: string }) =>
     i.category ?? productCategoryMap[i.productId] ?? ""
+  const isHhTarget = (i: { name: string; productId: string; category?: string }) =>
+    HAPPY_HOUR_CATEGORIES.includes(itemCategory(i)) && !HH_EXCLUDED_NAMES.includes(i.name)
+  const hasNightCharge = unpaidItems.some((i) => i.name === NIGHT_CHARGE_NAME)
   const drinkSubtotal = targetItems
-    .filter((i) => DRINK_CATEGORIES.includes(itemCategory(i)))
+    .filter((i) => DRINK_CATEGORIES.includes(itemCategory(i)) && !HH_EXCLUDED_NAMES.includes(i.name))
     .reduce((sum, i) => sum + i.subtotal, 0)
   const nonHhSubtotal = targetItems
-    .filter((i) => !HAPPY_HOUR_CATEGORIES.includes(itemCategory(i)))
+    .filter((i) => !isHhTarget(i))
     .reduce((sum, i) => sum + i.subtotal, 0)
   const drinkPerPerson = guestCount > 0 ? drinkSubtotal / guestCount : 0
   const drinkOveragePerPerson = Math.max(0, drinkPerPerson - DRINK_THRESHOLD)
@@ -481,7 +489,7 @@ export function OrderSidebar({
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex min-w-0 items-center gap-1.5">
                           <p className="truncate font-medium text-sm">{item.name}</p>
-                          {happyHour && HAPPY_HOUR_CATEGORIES.includes(itemCategory(item)) && (
+                          {happyHour && isHhTarget(item) && (
                             <span className="shrink-0 rounded bg-orange-500 px-1 py-0.5 text-[10px] font-bold text-white">HH</span>
                           )}
                         </div>
@@ -489,7 +497,7 @@ export function OrderSidebar({
                           {formatTime(item.orderedAt)}
                         </span>
                       </div>
-                      {happyHour && HAPPY_HOUR_CATEGORIES.includes(itemCategory(item)) ? (
+                      {happyHour && isHhTarget(item) ? (
                         <p className="text-xs text-muted-foreground line-through">
                           ¥{item.price.toLocaleString()} × {item.quantity} = ¥{item.subtotal.toLocaleString()}
                         </p>
@@ -589,7 +597,13 @@ export function OrderSidebar({
                 ? "bg-amber-500 hover:bg-amber-500/90 text-white border-amber-500"
                 : "border-amber-400 text-amber-600 hover:bg-amber-50",
             )}
-            onClick={() => setHappyHour(!happyHour)}
+            onClick={() => {
+              if (!happyHour && hasNightCharge) {
+                setShowNightChargeWarning(true)
+                return
+              }
+              onHappyHourChange(!happyHour)
+            }}
           >
             <Zap className={cn("mr-1.5 h-4 w-4", happyHour && "fill-white")} />
             {happyHour ? `ハッピーアワー適用中 (¥${Math.round(hhPerPerson).toLocaleString()}/人)` : "ハッピーアワー"}
@@ -739,7 +753,7 @@ export function OrderSidebar({
             </Button>
           )}
 
-          {(selectedBlock.status === "empty" || selectedBlock.status === "reserved") && !session && (
+          {(selectedBlock.status === "empty" || selectedBlock.status === "reserved") && (
             <Button
               size="lg"
               variant={selectedBlock.status === "reserved" ? "destructive" : "outline"}
@@ -758,6 +772,24 @@ export function OrderSidebar({
           )}
         </div>
       </div>
+
+      {/* ── ナイトチャージ警告ポップアップ ──────────────────────────── */}
+      {showNightChargeWarning && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50">
+          <div className="mx-4 w-full max-w-xs rounded-xl bg-card p-6 shadow-2xl">
+            <div className="mb-1 flex items-center gap-2 text-destructive">
+              <Zap className="h-5 w-5" />
+              <span className="font-bold">HH選択不可</span>
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              ナイトチャージが含まれているため、ハッピーアワーは選択できません。
+            </p>
+            <Button className="mt-4 w-full" onClick={() => setShowNightChargeWarning(false)}>
+              閉じる
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* ── オーダー追加モーダル ────────────────────────────────────── */}
       {showOrderModal && (

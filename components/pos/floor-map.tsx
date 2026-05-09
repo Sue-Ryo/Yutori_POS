@@ -105,10 +105,10 @@ export function FloorMap({
   }
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-card">
+    <div className="h-full overflow-auto rounded-lg border border-border bg-card">
       {/* ── ヘッダーバー ── */}
       {linkMode ? (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card px-3 py-2">
           <Link2 className="h-4 w-4 text-info" />
           <span className="text-sm font-medium text-info">連結する席を選択</span>
           <span className="text-xs text-muted-foreground">{linkSelection.length}席選択中</span>
@@ -116,7 +116,7 @@ export function FloorMap({
           <Button size="sm" variant="ghost" onClick={onCancelLinkMode}>キャンセル</Button>
         </div>
       ) : moveMode ? (
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card px-3 py-2">
           <ArrowRightLeft className="h-4 w-4 text-amber-500" />
           <span className="text-sm font-medium text-amber-600">
             {moveSource === null ? "移動元の席をタップ" : "移動先の空席をタップ"}
@@ -127,7 +127,7 @@ export function FloorMap({
           <Button size="sm" variant="ghost" onClick={onCancelMoveMode}>キャンセル</Button>
         </div>
       ) : (
-        <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-2">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-3 py-2">
           {/* 凡例 */}
           <div className="flex flex-wrap items-center gap-3 text-xs">
             <div className="flex items-center gap-1.5">
@@ -166,7 +166,7 @@ export function FloorMap({
       )}
 
       {/* ── マップキャンバス ── */}
-      <div className="relative flex-1 overflow-auto p-4">
+      <div className="relative p-4" style={{ minHeight: "calc(100% - 45px)" }}>
       {/* Grid background */}
       <div
         className="absolute inset-0 opacity-10"
@@ -293,7 +293,7 @@ export function FloorMap({
             <span className="mt-0.5 text-[10px] uppercase tracking-wide opacity-80">
               {isLinkedSecondary ? "連結中" : statusLabels[block.status]}
             </span>
-            {block.startedAt && block.status !== "empty" && (
+            {block.startedAt && (block.status === "occupied" || block.status === "checked_out") && (
               <div className="mt-1 flex items-center gap-1 text-[10px] opacity-80">
                 <Clock className="h-2.5 w-2.5" />
                 <span>{formatElapsed(block.startedAt, now)}</span>

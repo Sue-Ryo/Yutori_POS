@@ -114,9 +114,10 @@ CREATE POLICY "anon_all" ON pos_settings FOR ALL TO anon USING (true) WITH CHECK
 CREATE POLICY "anon_all" ON coupons FOR ALL TO anon USING (true) WITH CHECK (true);
 
 -- ============================================================
--- Realtime 有効化（blocks / sessions / payments）
+-- Realtime 有効化
 -- ============================================================
 
 ALTER PUBLICATION supabase_realtime ADD TABLE blocks;
 ALTER PUBLICATION supabase_realtime ADD TABLE sessions;
 ALTER PUBLICATION supabase_realtime ADD TABLE payments;
+ALTER PUBLICATION supabase_realtime ADD TABLE layout_elements;
