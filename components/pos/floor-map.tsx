@@ -105,10 +105,10 @@ export function FloorMap({
   }
 
   return (
-    <div className="h-full overflow-auto rounded-lg border border-border bg-card">
+    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-card">
       {/* ── ヘッダーバー ── */}
       {linkMode ? (
-        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card px-3 py-2">
+        <div className="flex flex-none items-center gap-2 border-b border-border bg-card px-4 py-3">
           <Link2 className="h-4 w-4 text-info" />
           <span className="text-sm font-medium text-info">連結する席を選択</span>
           <span className="text-xs text-muted-foreground">{linkSelection.length}席選択中</span>
@@ -116,7 +116,7 @@ export function FloorMap({
           <Button size="sm" variant="ghost" onClick={onCancelLinkMode}>キャンセル</Button>
         </div>
       ) : moveMode ? (
-        <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-border bg-card px-3 py-2">
+        <div className="flex flex-none items-center gap-2 border-b border-border bg-card px-4 py-3">
           <ArrowRightLeft className="h-4 w-4 text-amber-500" />
           <span className="text-sm font-medium text-amber-600">
             {moveSource === null ? "移動元の席をタップ" : "移動先の空席をタップ"}
@@ -127,7 +127,7 @@ export function FloorMap({
           <Button size="sm" variant="ghost" onClick={onCancelMoveMode}>キャンセル</Button>
         </div>
       ) : (
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-3 py-2">
+        <div className="flex flex-none items-center justify-between border-b border-border bg-card px-4 py-3">
           {/* 凡例 */}
           <div className="flex flex-wrap items-center gap-3 text-xs">
             <div className="flex items-center gap-1.5">
@@ -166,7 +166,8 @@ export function FloorMap({
       )}
 
       {/* ── マップキャンバス ── */}
-      <div className="relative p-4" style={{ minHeight: "calc(100% - 45px)" }}>
+      <div className="flex-1 overflow-auto">
+      <div className="relative p-4" style={{ minHeight: "100%" }}>
       {/* Grid background */}
       <div
         className="absolute inset-0 opacity-10"
@@ -303,6 +304,7 @@ export function FloorMap({
         )
       })}
 
+      </div>
       </div>
     </div>
   )

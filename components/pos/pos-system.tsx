@@ -214,6 +214,7 @@ export function POSSystem() {
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [happyHourByBlock, setHappyHourByBlock] = useState<Record<string, boolean>>({})
+  const [customerNames, setCustomerNames] = useState<Record<string, string>>({})
   const [linkMode, setLinkMode] = useState(false)
   const [linkSelection, setLinkSelection] = useState<string[]>([])
   const [moveMode, setMoveMode] = useState(false)
@@ -229,6 +230,12 @@ export function POSSystem() {
   const handleHappyHourChange = useCallback((value: boolean) => {
     if (!selectedBlockId) return
     setHappyHourByBlock((prev) => ({ ...prev, [selectedBlockId]: value }))
+  }, [selectedBlockId])
+
+  const currentCustomerName = selectedBlockId ? (customerNames[selectedBlockId] ?? "") : ""
+  const handleCustomerNameChange = useCallback((name: string) => {
+    if (!selectedBlockId) return
+    setCustomerNames((prev) => ({ ...prev, [selectedBlockId]: name }))
   }, [selectedBlockId])
 
   const handleBlockClick = useCallback((blockId: string) => {
@@ -266,6 +273,7 @@ export function POSSystem() {
   const handleBussingComplete = useCallback(() => {
     if (!selectedBlockId) return
     bussingById(selectedBlockId)
+    setCustomerNames((prev) => { const next = { ...prev }; delete next[selectedBlockId]; return next })
     handleCloseSidebar()
   }, [selectedBlockId, bussingById, handleCloseSidebar])
 
@@ -328,6 +336,8 @@ export function POSSystem() {
         guestCount: data.guestCount,
         paidItemIds: targetItemIds,
         couponId: data.couponId,
+        customerName: data.customerName,
+        sessionStartedAt: session.startedAt,
       }
       setPayments((prev) => [newPayment, ...prev])
 
@@ -448,8 +458,9 @@ export function POSSystem() {
     const existingSession = sessions.find((s) => s.blockId === primaryBlockId && !s.endedAt)
     if (existingSession) {
       const linkedBlockIds = [...(existingSession.linkedBlockIds ?? []), ...secondaryBlockIds]
+      const guestCount = 1 + linkedBlockIds.length
       setSessions((prev) =>
-        prev.map((s) => (s.id === existingSession.id ? { ...s, linkedBlockIds } : s))
+        prev.map((s) => (s.id === existingSession.id ? { ...s, linkedBlockIds, guestCount } : s))
       )
       // サブブロックのステータスをプライマリに合わせる
       const primaryBlock = blocks.find((b) => b.id === primaryBlockId)
@@ -468,7 +479,7 @@ export function POSSystem() {
         blockId: primaryBlockId,
         orderItems: [],
         startedAt: now,
-        guestCount: 1,
+        guestCount: 1 + secondaryBlockIds.length,
         linkedBlockIds: secondaryBlockIds,
       }
       setSessions((prev) => [...prev, newSession])
@@ -499,7 +510,9 @@ export function POSSystem() {
       prev.map((s) => {
         if (s.id !== sessionId) return s
         const linkedBlockIds = (s.linkedBlockIds ?? []).filter((id) => id !== blockIdToUnlink)
-        return { ...s, linkedBlockIds: linkedBlockIds.length > 0 ? linkedBlockIds : undefined }
+        const newLinkedBlockIds = linkedBlockIds.length > 0 ? linkedBlockIds : undefined
+        const guestCount = newLinkedBlockIds ? 1 + newLinkedBlockIds.length : 1
+        return { ...s, linkedBlockIds: newLinkedBlockIds, guestCount }
       })
     )
     setBlocks((prev) =>
@@ -563,6 +576,7 @@ export function POSSystem() {
       })
     )
 
+    setCustomerNames((prev) => { const next = { ...prev }; delete next[moveSource]; return next })
     setMoveMode(false)
     setMoveSource(null)
     setMoveDest(null)
@@ -744,6 +758,8 @@ export function POSSystem() {
         onReserveBlock={handleReserveBlock}
         happyHour={currentHappyHour}
         onHappyHourChange={handleHappyHourChange}
+        customerName={currentCustomerName}
+        onCustomerNameChange={handleCustomerNameChange}
       />
 
       {sidebarOpen && activeTab === "map" && (

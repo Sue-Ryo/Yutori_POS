@@ -20,6 +20,9 @@ export function rowToPayment(row: Record<string, unknown>): Payment {
     cancelReason: (row.cancel_reason as string | null) ?? undefined,
     paidItemIds: (row.paid_item_ids as string[]) ?? [],
     couponId: (row.coupon_id as string | null) ?? undefined,
+    customerName: (row.customer_name as string | null) ?? undefined,
+    sessionStartedAt: row.session_started_at ? new Date(row.session_started_at as string) : undefined,
+    syncedToSheetAt: row.synced_to_sheet_at ? new Date(row.synced_to_sheet_at as string) : undefined,
   }
 }
 
@@ -42,7 +45,30 @@ function paymentToRow(payment: Payment): Record<string, unknown> {
     cancel_reason: payment.cancelReason ?? null,
     paid_item_ids: payment.paidItemIds,
     coupon_id: payment.couponId ?? null,
+    customer_name: payment.customerName ?? null,
+    session_started_at: payment.sessionStartedAt?.toISOString() ?? null,
+    synced_to_sheet_at: payment.syncedToSheetAt?.toISOString() ?? null,
   }
+}
+
+export async function fetchUnsyncedPayments(): Promise<Payment[]> {
+  const { data, error } = await supabase
+    .from("payments")
+    .select("*")
+    .is("synced_to_sheet_at", null)
+    .is("canceled_at", null)
+    .order("payment_datetime", { ascending: true })
+  if (error) throw error
+  return (data as Record<string, unknown>[]).map(rowToPayment)
+}
+
+export async function markPaymentsSynced(ids: string[]): Promise<void> {
+  if (ids.length === 0) return
+  const { error } = await supabase
+    .from("payments")
+    .update({ synced_to_sheet_at: new Date().toISOString() })
+    .in("id", ids)
+  if (error) throw error
 }
 
 export async function fetchPayments(): Promise<Payment[]> {

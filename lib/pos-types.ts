@@ -73,6 +73,8 @@ export interface CheckoutData {
   couponId?: string
   guestCount: number
   paidItemIds: string[]
+  customerName?: string
+  sessionStartedAt?: Date
 }
 
 export interface Payment {
@@ -93,6 +95,9 @@ export interface Payment {
   cancelReason?: string
   paidItemIds: string[]
   couponId?: string
+  customerName?: string
+  sessionStartedAt?: Date
+  syncedToSheetAt?: Date
 }
 
 export interface LayoutElement {

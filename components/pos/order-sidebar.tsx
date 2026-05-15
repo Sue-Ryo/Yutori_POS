@@ -58,6 +58,8 @@ interface OrderSidebarProps {
   onReserveBlock: (blockId: string) => void
   happyHour: boolean
   onHappyHourChange: (value: boolean) => void
+  customerName: string
+  onCustomerNameChange: (name: string) => void
 }
 
 export function OrderSidebar({
@@ -76,6 +78,8 @@ export function OrderSidebar({
   onReserveBlock,
   happyHour,
   onHappyHourChange,
+  customerName,
+  onCustomerNameChange,
 }: OrderSidebarProps) {
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({})
@@ -92,6 +96,14 @@ export function OrderSidebar({
   useEffect(() => {
     setNoteText(session?.note ?? "")
   }, [session?.id])
+
+  // 連結席がある場合は席数=来客人数として自動同期
+  useEffect(() => {
+    if (!session) return
+    if (session.linkedBlockIds?.length) {
+      setGuestCount(1 + session.linkedBlockIds.length)
+    }
+  }, [session?.id, session?.linkedBlockIds?.length])
 
   // サイドバーが閉じたらモーダルも閉じる
   useEffect(() => {
@@ -311,6 +323,8 @@ export function OrderSidebar({
     )
   }
 
+  const resolvedCustomerName = customerName.trim() || selectedBlock.name
+
   const handleCheckoutCash = () => {
     if (!session) return
     const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
@@ -323,6 +337,7 @@ export function OrderSidebar({
       couponId: selectedCouponId || undefined,
       guestCount,
       paidItemIds,
+      customerName: resolvedCustomerName,
     })
     resetCheckoutState()
   }
@@ -339,6 +354,7 @@ export function OrderSidebar({
       couponId: selectedCouponId || undefined,
       guestCount,
       paidItemIds,
+      customerName: resolvedCustomerName,
     })
     resetCheckoutState()
   }
@@ -367,7 +383,16 @@ export function OrderSidebar({
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex-1">
-            <h2 className="text-lg font-bold">{selectedBlock.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-bold shrink-0">{selectedBlock.name}</h2>
+              <input
+                type="text"
+                value={customerName}
+                onChange={(e) => onCustomerNameChange(e.target.value)}
+                placeholder="顧客名"
+                className="min-w-0 flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground/40 outline-none border-b border-border/50 focus:border-primary"
+              />
+            </div>
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               {session && (
                 <span className="flex items-center gap-1">
@@ -377,18 +402,28 @@ export function OrderSidebar({
               )}
               <div className="flex items-center gap-1">
                 <Users className="h-3 w-3" />
-                <Input
-                  type="number"
-                  value={guestCount}
-                  onChange={(e) => {
-                    const n = Math.max(1, parseInt(e.target.value) || 1)
-                    setGuestCount(n)
-                    if (session) onUpdateSession({ ...session, guestCount: n })
-                  }}
-                  className="h-6 w-14 border-0 bg-transparent p-0 text-sm"
-                  min={1}
-                />
-                <span>名</span>
+                {session?.linkedBlockIds?.length ? (
+                  <>
+                    <span className="text-sm font-medium">{guestCount}</span>
+                    <span>名</span>
+                    <span className="rounded bg-info/15 px-1 py-0.5 text-[10px] font-medium text-info">連結</span>
+                  </>
+                ) : (
+                  <>
+                    <Input
+                      type="number"
+                      value={guestCount}
+                      onChange={(e) => {
+                        const n = Math.max(1, parseInt(e.target.value) || 1)
+                        setGuestCount(n)
+                        if (session) onUpdateSession({ ...session, guestCount: n })
+                      }}
+                      className="h-6 w-14 border-0 bg-transparent p-0 text-sm"
+                      min={1}
+                    />
+                    <span>名</span>
+                  </>
+                )}
               </div>
             </div>
             <div className="mt-1.5 flex items-center gap-1.5">

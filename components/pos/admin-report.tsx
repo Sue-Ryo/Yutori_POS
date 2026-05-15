@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { cn } from "@/lib/utils"
 import type {
   Payment,
@@ -34,6 +34,8 @@ import {
   FolderPlus,
   ToggleLeft,
   ToggleRight,
+  Sheet,
+  RefreshCw,
 } from "lucide-react"
 import { getBusinessDate } from "@/lib/pos-store"
 
@@ -648,6 +650,25 @@ export function AdminReport({
   const [period, setPeriod] = useState<Period>("day")
   const [expenses, setExpenses] = useState(0)
   const [handoverNote, setHandoverNote] = useState("")
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ count: number; error?: string } | null>(null)
+
+  const unsyncedCount = payments.filter((p) => !p.syncedToSheetAt && !p.canceledAt).length
+
+  const handleManualSync = useCallback(async () => {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch("/api/sheets/sync", { method: "POST" })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? "同期に失敗しました")
+      setSyncResult({ count: json.synced as number })
+    } catch (err) {
+      setSyncResult({ count: 0, error: String(err) })
+    } finally {
+      setSyncing(false)
+    }
+  }, [])
 
   const todayBD = getBusinessDate(new Date(), settings.businessDayStartTime)
 
@@ -736,6 +757,45 @@ export function AdminReport({
                   ))}
                 </div>
               </div>
+
+              {/* Google Sheets 同期 */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Sheet className="h-5 w-5 text-success" />
+                      スプレッドシート同期
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {unsyncedCount > 0 && (
+                        <span className="rounded-full bg-warning/20 px-2 py-0.5 text-xs font-medium text-warning">
+                          未同期 {unsyncedCount}件
+                        </span>
+                      )}
+                      {unsyncedCount === 0 && (
+                        <span className="rounded-full bg-success/20 px-2 py-0.5 text-xs font-medium text-success">
+                          同期済
+                        </span>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="gap-1.5"
+                        onClick={handleManualSync}
+                        disabled={syncing || unsyncedCount === 0}
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
+                        {syncing ? "同期中..." : "今すぐ同期"}
+                      </Button>
+                    </div>
+                  </CardTitle>
+                  {syncResult && (
+                    <p className={`text-xs mt-1 ${syncResult.error ? "text-destructive" : "text-success"}`}>
+                      {syncResult.error ?? `${syncResult.count}件をスプレッドシートに送信しました`}
+                    </p>
+                  )}
+                </CardHeader>
+              </Card>
 
               <Card>
                 <CardHeader>
