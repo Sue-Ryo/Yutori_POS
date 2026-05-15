@@ -415,6 +415,12 @@ export function POSSystem() {
     [payments, sessions]
   )
 
+  const handleMarkPaymentsSynced = useCallback((ids: string[], syncedAt: Date) => {
+    setPayments((prev) =>
+      prev.map((p) => ids.includes(p.id) ? { ...p, syncedToSheetAt: syncedAt } : p)
+    )
+  }, [])
+
   const handleReserveBlock = useCallback((blockId: string) => {
     setBlocks((prev) =>
       prev.map((b) =>
@@ -731,6 +737,7 @@ export function POSSystem() {
             onUpdateSettings={setSettings}
             onUpdateProducts={handleUpdateProducts}
             onUpdateCoupons={setCoupons}
+            onMarkPaymentsSynced={handleMarkPaymentsSynced}
           />
         )}
         {dbError && (

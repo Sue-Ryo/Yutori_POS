@@ -57,6 +57,7 @@ interface AdminReportProps {
   onUpdateSettings: (settings: BusinessSettings) => void
   onUpdateProducts: (products: Product[]) => void
   onUpdateCoupons: (coupons: Coupon[]) => void
+  onMarkPaymentsSynced: (ids: string[], syncedAt: Date) => void
 }
 
 // ── 商品マスタタブ ─────────────────────────────────────────────────────
@@ -645,6 +646,7 @@ export function AdminReport({
   onUpdateSettings,
   onUpdateProducts,
   onUpdateCoupons,
+  onMarkPaymentsSynced,
 }: AdminReportProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("daily")
   const [period, setPeriod] = useState<Period>("day")
@@ -659,16 +661,25 @@ export function AdminReport({
     setSyncing(true)
     setSyncResult(null)
     try {
-      const res = await fetch("/api/sheets/sync", { method: "POST" })
+      const unsynced = payments.filter((p) => !p.syncedToSheetAt && !p.canceledAt)
+      const res = await fetch("/api/sheets/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payments: unsynced }),
+      })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? "同期に失敗しました")
-      setSyncResult({ count: json.synced as number })
+      const syncedIds: string[] = json.syncedIds ?? []
+      if (syncedIds.length > 0) {
+        onMarkPaymentsSynced(syncedIds, new Date())
+      }
+      setSyncResult({ count: syncedIds.length })
     } catch (err) {
       setSyncResult({ count: 0, error: String(err) })
     } finally {
       setSyncing(false)
     }
-  }, [])
+  }, [payments, onMarkPaymentsSynced])
 
   const todayBD = getBusinessDate(new Date(), settings.businessDayStartTime)
 

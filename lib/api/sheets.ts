@@ -117,13 +117,13 @@ async function appendRows(spreadsheetId: string, sheetTitle: string, rows: unkno
   })
 }
 
-export async function syncUnsyncedPayments(payments: Payment[]): Promise<number> {
-  const unsynced = payments.filter((p) => !p.syncedToSheetAt && !p.canceledAt)
-  if (unsynced.length === 0) return 0
+// payments を受け取ってシートに書き込み、同期した ID 一覧を返す（DB更新はしない）
+export async function syncPaymentsToSheet(payments: Payment[]): Promise<string[]> {
+  if (payments.length === 0) return []
 
   // 月ごとにグループ化
   const byMonth: Record<string, Payment[]> = {}
-  for (const p of unsynced) {
+  for (const p of payments) {
     const ym = toYearMonth(p.businessDate)
     ;(byMonth[ym] ??= []).push(p)
   }
@@ -149,8 +149,8 @@ export async function syncUnsyncedPayments(payments: Payment[]): Promise<number>
       )
 
       const rows = sorted.map((p, i) => {
-        const startTime = p.sessionStartedAt ? formatTime(p.sessionStartedAt) : ""
-        const endTime = formatTime(p.paymentDatetime)
+        const startTime = p.sessionStartedAt ? formatTime(new Date(p.sessionStartedAt)) : ""
+        const endTime = formatTime(new Date(p.paymentDatetime))
         const stayMins = p.sessionStartedAt
           ? Math.round((new Date(p.paymentDatetime).getTime() - new Date(p.sessionStartedAt).getTime()) / 60000)
           : ""
@@ -175,11 +175,5 @@ export async function syncUnsyncedPayments(payments: Payment[]): Promise<number>
     }
   }
 
-  // 同期済みに更新
-  if (syncedIds.length > 0) {
-    const now = new Date().toISOString()
-    await supabase.from("payments").update({ synced_to_sheet_at: now }).in("id", syncedIds)
-  }
-
-  return syncedIds.length
+  return syncedIds
 }
