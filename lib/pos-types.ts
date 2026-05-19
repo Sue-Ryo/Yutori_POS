@@ -62,6 +62,8 @@ export interface BlockSession {
   endedAt?: Date
   guestCount: number
   note?: string
+  customerName?: string
+  happyHour?: boolean
 }
 
 export interface CheckoutData {

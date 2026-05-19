@@ -35,11 +35,11 @@ import {
   CheckCheck,
 } from "lucide-react"
 
-const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "ドリンク", "システム", "shisha", "system", "drink", "charge"]
+const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "ドリンク", "shisha", "drink", "charge"]
 const DRINK_CATEGORIES = ["ドリンク", "drink"]
 const HAPPY_HOUR_BASE = 3000
 const DRINK_THRESHOLD = 600
-const HH_EXCLUDED_NAMES = ["トップ替え", "アイスホース"]
+const HH_EXCLUDED_NAMES = ["トップ替え", "アイスホース", "ダークリーフ"]
 const NIGHT_CHARGE_NAME = "ナイトチャージ"
 
 interface OrderSidebarProps {
@@ -204,6 +204,8 @@ export function OrderSidebar({
       startedAt: new Date(),
       guestCount,
       note: noteText || undefined,
+      customerName: customerName || undefined,
+      happyHour: happyHour || undefined,
     }
   }
 

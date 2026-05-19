@@ -4,8 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 import type { ServiceBlock, BlockSession, LayoutElement } from "@/lib/pos-types"
 import { formatElapsed } from "@/lib/pos-store"
-import { Clock, Link2, CheckCircle2, ArrowRightLeft } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Clock, Link2, CheckCircle2 } from "lucide-react"
 
 interface FloorMapProps {
   blocks: ServiceBlock[]
@@ -106,65 +105,6 @@ export function FloorMap({
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-lg border border-border bg-card">
-      {/* ── ヘッダーバー ── */}
-      {linkMode ? (
-        <div className="flex flex-none items-center gap-2 border-b border-border bg-card px-4 py-3">
-          <Link2 className="h-4 w-4 text-info" />
-          <span className="text-sm font-medium text-info">連結する席を選択</span>
-          <span className="text-xs text-muted-foreground">{linkSelection.length}席選択中</span>
-          <Button size="sm" className="ml-1 bg-success text-primary-foreground hover:bg-success/90" disabled={linkSelection.length < 2} onClick={onConfirmLink}>連結する</Button>
-          <Button size="sm" variant="ghost" onClick={onCancelLinkMode}>キャンセル</Button>
-        </div>
-      ) : moveMode ? (
-        <div className="flex flex-none items-center gap-2 border-b border-border bg-card px-4 py-3">
-          <ArrowRightLeft className="h-4 w-4 text-amber-500" />
-          <span className="text-sm font-medium text-amber-600">
-            {moveSource === null ? "移動元の席をタップ" : "移動先の空席をタップ"}
-          </span>
-          {moveSource && moveDest && (
-            <Button size="sm" className="ml-1 bg-success text-primary-foreground hover:bg-success/90" onClick={onConfirmMove}>移動する</Button>
-          )}
-          <Button size="sm" variant="ghost" onClick={onCancelMoveMode}>キャンセル</Button>
-        </div>
-      ) : (
-        <div className="flex flex-none items-center justify-between border-b border-border bg-card px-4 py-3">
-          {/* 凡例 */}
-          <div className="flex flex-wrap items-center gap-3 text-xs">
-            <div className="flex items-center gap-1.5">
-              <div className="h-3 w-3 rounded bg-table-empty" />
-              <span className="text-muted-foreground">空席</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="h-3 w-3 rounded bg-table-reserved" />
-              <span className="text-muted-foreground">予約</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="h-3 w-3 rounded bg-table-occupied" />
-              <span className="text-muted-foreground">使用中</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="h-3 w-3 rounded bg-table-checked-out" />
-              <span className="text-muted-foreground">会計済</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Link2 className="h-3 w-3 text-info" />
-              <span className="text-muted-foreground">連結中</span>
-            </div>
-          </div>
-          {/* 操作ボタン */}
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={onEnterLinkMode}>
-              <Link2 className="h-3.5 w-3.5" />
-              席を連結
-            </Button>
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={onEnterMoveMode}>
-              <ArrowRightLeft className="h-3.5 w-3.5" />
-              席移動
-            </Button>
-          </div>
-        </div>
-      )}
-
       {/* ── マップキャンバス ── */}
       <div className="flex-1 overflow-auto">
       <div className="relative p-4" style={{ minHeight: "100%" }}>

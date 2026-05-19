@@ -43,7 +43,7 @@ import { OrderSidebar } from "./order-sidebar"
 import { LayoutEditor } from "./layout-editor"
 import { AdminReport } from "./admin-report"
 import { Button } from "@/components/ui/button"
-import { LayoutGrid, Edit3, BarChart3, UtensilsCrossed, RefreshCw } from "lucide-react"
+import { LayoutGrid, Edit3, BarChart3, UtensilsCrossed, RefreshCw, Link2, ArrowRightLeft } from "lucide-react"
 
 // 目黒店の store_id
 const STORE_ID = 1
@@ -74,21 +74,21 @@ export function POSSystem() {
         dbBlocks, dbSessions, dbPayments,
         dbSettings, dbCoupons, dbElements, dbProducts,
       ] = await Promise.all([
-        fetchBlocks().catch((e) => { console.error("[DB]blocks fetch:", e); return [] as ServiceBlock[] }),
-        fetchSessions().catch((e) => { console.error("[DB]sessions fetch:", e); return [] as BlockSession[] }),
-        fetchPayments().catch((e) => { console.error("[DB]payments fetch:", e); return [] as Payment[] }),
+        fetchBlocks().catch((e) => { console.error("[DB]blocks fetch:", e); return null }),
+        fetchSessions().catch((e) => { console.error("[DB]sessions fetch:", e); return null }),
+        fetchPayments().catch((e) => { console.error("[DB]payments fetch:", e); return null }),
         fetchSettings().catch((e) => { console.error("[DB]settings fetch:", e); return null }),
-        fetchCoupons().catch((e) => { console.error("[DB]coupons fetch:", e); return [] as Coupon[] }),
-        fetchLayoutElements().catch((e) => { console.error("[DB]layout fetch:", e); return [] as LayoutElement[] }),
-        fetchProducts().catch((e) => { console.error("[DB]products fetch:", e); return [] as Product[] }),
+        fetchCoupons().catch((e) => { console.error("[DB]coupons fetch:", e); return null }),
+        fetchLayoutElements().catch((e) => { console.error("[DB]layout fetch:", e); return null }),
+        fetchProducts().catch((e) => { console.error("[DB]products fetch:", e); return null }),
       ])
-      if (dbBlocks.length > 0) setBlocks(dbBlocks)
-      if (dbSessions.length > 0) setSessions(dbSessions)
-      if (dbPayments.length > 0) setPayments(dbPayments)
-      if (dbSettings) setSettings(dbSettings)
-      if (dbCoupons.length > 0) setCoupons(dbCoupons)
-      if (dbElements.length > 0) setLayoutElements(dbElements)
-      setProducts(dbProducts)
+      if (dbBlocks !== null) setBlocks(dbBlocks)
+      if (dbSessions !== null) setSessions(dbSessions)
+      if (dbPayments !== null) setPayments(dbPayments)
+      if (dbSettings !== null) setSettings(dbSettings)
+      if (dbCoupons !== null) setCoupons(dbCoupons)
+      if (dbElements !== null) setLayoutElements(dbElements)
+      if (dbProducts !== null) setProducts(dbProducts)
       console.log("[POSSystem] DB読み込み完了")
     } catch (err) {
       console.error("DB読み込みエラー:", err)
@@ -101,6 +101,16 @@ export function POSSystem() {
 
   useEffect(() => {
     loadAllFromDB()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // タブ復帰時にDBから再取得（realtime漏れのフォールバック）
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") loadAllFromDB()
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -152,6 +162,13 @@ export function POSSystem() {
           setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]coupons:", e))
       })
+      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
+        fetchProducts().then((data) => {
+          dbSyncingRef.current = true
+          setProducts(data)
+          setTimeout(() => { dbSyncingRef.current = false }, 300)
+        }).catch((e) => console.error("[RT]products:", e))
+      })
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
@@ -201,18 +218,19 @@ export function POSSystem() {
     const savedPayments = loadList(STORAGE_KEYS.payments, revivers.revivePayment)
     const savedSettings = loadObject<BusinessSettings>(STORAGE_KEYS.settings)
     const savedCoupons = loadList(STORAGE_KEYS.coupons, (r) => r as unknown as Coupon)
-    if (savedBlocks) setBlocks(savedBlocks)
-    if (savedElements) setLayoutElements(savedElements)
-    if (savedSessions) setSessions(savedSessions)
-    if (savedPayments) setPayments(savedPayments)
-    if (savedSettings) setSettings(savedSettings)
-    if (savedCoupons) setCoupons(savedCoupons)
+    if (savedBlocks !== null) setBlocks(savedBlocks)
+    if (savedElements !== null) setLayoutElements(savedElements)
+    if (savedSessions !== null) setSessions(savedSessions)
+    if (savedPayments !== null) setPayments(savedPayments)
+    if (savedSettings !== null) setSettings(savedSettings)
+    if (savedCoupons !== null) setCoupons(savedCoupons)
     initializedRef.current = true
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // セッション未作成時のローカルキャッシュ（初回オーダー時にセッションへ統合）
   const [happyHourByBlock, setHappyHourByBlock] = useState<Record<string, boolean>>({})
   const [customerNames, setCustomerNames] = useState<Record<string, string>>({})
   const [linkMode, setLinkMode] = useState(false)
@@ -226,17 +244,28 @@ export function POSSystem() {
     ? sessions.find((s) => s.blockId === selectedBlockId && !s.endedAt) ?? null
     : null
 
-  const currentHappyHour = selectedBlockId ? (happyHourByBlock[selectedBlockId] ?? false) : false
+  // セッションがあればセッション値を優先、なければローカルキャッシュを使用
+  const currentHappyHour = currentSession?.happyHour ?? (selectedBlockId ? (happyHourByBlock[selectedBlockId] ?? false) : false)
   const handleHappyHourChange = useCallback((value: boolean) => {
     if (!selectedBlockId) return
     setHappyHourByBlock((prev) => ({ ...prev, [selectedBlockId]: value }))
-  }, [selectedBlockId])
+    if (currentSession) {
+      const updated = { ...currentSession, happyHour: value }
+      setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+      upsertSessions([updated]).catch((e) => console.error("[DB]sessions happyHour:", e))
+    }
+  }, [selectedBlockId, currentSession])
 
-  const currentCustomerName = selectedBlockId ? (customerNames[selectedBlockId] ?? "") : ""
+  const currentCustomerName = currentSession?.customerName ?? (selectedBlockId ? (customerNames[selectedBlockId] ?? "") : "")
   const handleCustomerNameChange = useCallback((name: string) => {
     if (!selectedBlockId) return
     setCustomerNames((prev) => ({ ...prev, [selectedBlockId]: name }))
-  }, [selectedBlockId])
+    if (currentSession) {
+      const updated = { ...currentSession, customerName: name }
+      setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+      upsertSessions([updated]).catch((e) => console.error("[DB]sessions customerName:", e))
+    }
+  }, [selectedBlockId, currentSession])
 
   const handleBlockClick = useCallback((blockId: string) => {
     // 連結先（サブ）ブロックをクリックした場合はプライマリブロックのセッションを開く
@@ -279,13 +308,23 @@ export function POSSystem() {
 
   const handleUpdateSession = useCallback(
     (updatedSession: BlockSession) => {
+      // ローカルキャッシュの customerName / happyHour を新規セッションに統合
+      const sessionWithCache = sessions.find((s) => s.id === updatedSession.id)
+        ? updatedSession
+        : {
+            ...updatedSession,
+            customerName: updatedSession.customerName ?? customerNames[updatedSession.blockId] ?? undefined,
+            happyHour: updatedSession.happyHour ?? happyHourByBlock[updatedSession.blockId] ?? undefined,
+          }
       setSessions((prev) => {
-        const exists = prev.find((s) => s.id === updatedSession.id)
+        const exists = prev.find((s) => s.id === sessionWithCache.id)
         if (exists) {
-          return prev.map((s) => (s.id === updatedSession.id ? updatedSession : s))
+          return prev.map((s) => (s.id === sessionWithCache.id ? sessionWithCache : s))
         }
-        return [...prev, updatedSession]
+        return [...prev, sessionWithCache]
       })
+      // useEffect の dbSyncingRef ガードに依存せず直接同期
+      upsertSessions([sessionWithCache]).catch((e) => console.error("[DB]sessions update:", e))
 
       const unpaidItems = updatedSession.orderItems.filter((i) => !i.isPaid)
       const hasItems = unpaidItems.length > 0
@@ -303,7 +342,7 @@ export function POSSystem() {
         })
       )
     },
-    []
+    [sessions, customerNames, happyHourByBlock]
   )
 
   const handleCheckout = useCallback(
@@ -465,9 +504,11 @@ export function POSSystem() {
     if (existingSession) {
       const linkedBlockIds = [...(existingSession.linkedBlockIds ?? []), ...secondaryBlockIds]
       const guestCount = 1 + linkedBlockIds.length
+      const updatedSession = { ...existingSession, linkedBlockIds, guestCount }
       setSessions((prev) =>
-        prev.map((s) => (s.id === existingSession.id ? { ...s, linkedBlockIds, guestCount } : s))
+        prev.map((s) => (s.id === existingSession.id ? updatedSession : s))
       )
+      upsertSessions([updatedSession]).catch((e) => console.error("[DB]sessions link:", e))
       // サブブロックのステータスをプライマリに合わせる
       const primaryBlock = blocks.find((b) => b.id === primaryBlockId)
       if (primaryBlock) {
@@ -489,6 +530,7 @@ export function POSSystem() {
         linkedBlockIds: secondaryBlockIds,
       }
       setSessions((prev) => [...prev, newSession])
+      upsertSessions([newSession]).catch((e) => console.error("[DB]sessions link new:", e))
       // プライマリ・サブ両方を occupied に（startedAt はオーダー3個到達時にセット）
       setBlocks((prev) =>
         prev.map((b) =>
@@ -512,15 +554,15 @@ export function POSSystem() {
   }, [linkSelection, sessions])
 
   const handleUnlinkBlock = useCallback((sessionId: string, blockIdToUnlink: string) => {
-    setSessions((prev) =>
-      prev.map((s) => {
-        if (s.id !== sessionId) return s
-        const linkedBlockIds = (s.linkedBlockIds ?? []).filter((id) => id !== blockIdToUnlink)
-        const newLinkedBlockIds = linkedBlockIds.length > 0 ? linkedBlockIds : undefined
-        const guestCount = newLinkedBlockIds ? 1 + newLinkedBlockIds.length : 1
-        return { ...s, linkedBlockIds: newLinkedBlockIds, guestCount }
-      })
-    )
+    const target = sessions.find((s) => s.id === sessionId)
+    if (target) {
+      const linkedBlockIds = (target.linkedBlockIds ?? []).filter((id) => id !== blockIdToUnlink)
+      const newLinkedBlockIds = linkedBlockIds.length > 0 ? linkedBlockIds : undefined
+      const guestCount = newLinkedBlockIds ? 1 + newLinkedBlockIds.length : 1
+      const updatedSession = { ...target, linkedBlockIds: newLinkedBlockIds, guestCount }
+      setSessions((prev) => prev.map((s) => (s.id === sessionId ? updatedSession : s)))
+      upsertSessions([updatedSession]).catch((e) => console.error("[DB]sessions unlink:", e))
+    }
     setBlocks((prev) =>
       prev.map((b) =>
         b.id === blockIdToUnlink
@@ -528,7 +570,7 @@ export function POSSystem() {
           : b
       )
     )
-  }, [])
+  }, [sessions])
 
   // ── 席移動モード ──────────────────────────────────────────────────────
 
@@ -692,6 +734,67 @@ export function POSSystem() {
           </Button>
         </div>
       </header>
+
+      {/* 席状況早見表 (マップタブのみ表示) */}
+      {activeTab === "map" && (
+        <div className="sticky top-16 z-9 border-b border-border bg-card px-4 py-2.5">
+          {linkMode ? (
+            <div className="flex items-center gap-2">
+              <Link2 className="h-4 w-4 text-info" />
+              <span className="text-sm font-medium text-info">連結する席を選択</span>
+              <span className="text-xs text-muted-foreground">{linkSelection.length}席選択中</span>
+              <Button size="sm" className="ml-1 bg-success text-primary-foreground hover:bg-success/90" disabled={linkSelection.length < 2} onClick={handleConfirmLink}>連結する</Button>
+              <Button size="sm" variant="ghost" onClick={handleCancelLinkMode}>キャンセル</Button>
+            </div>
+          ) : moveMode ? (
+            <div className="flex items-center gap-2">
+              <ArrowRightLeft className="h-4 w-4 text-amber-500" />
+              <span className="text-sm font-medium text-amber-600">
+                {moveSource === null ? "移動元の席をタップ" : "移動先の空席をタップ"}
+              </span>
+              {moveSource && moveDest && (
+                <Button size="sm" className="ml-1 bg-success text-primary-foreground hover:bg-success/90" onClick={handleConfirmMove}>移動する</Button>
+              )}
+              <Button size="sm" variant="ghost" onClick={handleCancelMoveMode}>キャンセル</Button>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center gap-3 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <div className="h-3 w-3 rounded bg-table-empty" />
+                  <span className="text-muted-foreground">空席</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="h-3 w-3 rounded bg-table-reserved" />
+                  <span className="text-muted-foreground">予約</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="h-3 w-3 rounded bg-table-occupied" />
+                  <span className="text-muted-foreground">使用中</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="h-3 w-3 rounded bg-table-checked-out" />
+                  <span className="text-muted-foreground">会計済</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Link2 className="h-3 w-3 text-info" />
+                  <span className="text-muted-foreground">連結中</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={handleEnterLinkMode}>
+                  <Link2 className="h-3.5 w-3.5" />
+                  席を連結
+                </Button>
+                <Button size="sm" variant="outline" className="gap-1.5" onClick={handleEnterMoveMode}>
+                  <ArrowRightLeft className="h-3.5 w-3.5" />
+                  席移動
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Main Content */}
       <main className="flex-1 overflow-hidden p-4">

@@ -217,39 +217,7 @@ export const initialSessions: BlockSession[] = [
   },
 ]
 
-export const initialPayments: Payment[] = [
-  {
-    id: "pay1",
-    sessionId: "prev1",
-    blockId: "b1",
-    paymentDatetime: new Date(Date.now() - 2 * 3600000),
-    businessDate: new Date().toISOString().split("T")[0],
-    subtotalAmount: 5200,
-    discountAmount: 0,
-    taxAmount: 520,
-    totalAmount: 5720,
-    cashAmount: 5720,
-    cashlessAmount: 0,
-    guestCount: 2,
-    paidItemIds: [],
-  },
-  {
-    id: "pay2",
-    sessionId: "prev2",
-    blockId: "b4",
-    paymentDatetime: new Date(Date.now() - 1 * 3600000),
-    businessDate: new Date().toISOString().split("T")[0],
-    subtotalAmount: 2300,
-    discountAmount: 500,
-    taxAmount: 180,
-    totalAmount: 1980,
-    cashAmount: 0,
-    cashlessAmount: 1980,
-    guestCount: 1,
-    paidItemIds: [],
-    couponId: "c1",
-  },
-]
+export const initialPayments: Payment[] = []
 
 export const initialSettings: BusinessSettings = {
   storeName: "ゆとり",

@@ -19,6 +19,8 @@ export function rowToSession(row: Record<string, unknown>): BlockSession {
     endedAt: row.ended_at ? new Date(row.ended_at as string) : undefined,
     guestCount: row.guest_count as number,
     note: (row.note as string | null) ?? undefined,
+    customerName: (row.customer_name as string | null) ?? undefined,
+    happyHour: (row.happy_hour as boolean | null) ?? false,
   }
 }
 
@@ -37,6 +39,8 @@ function sessionToRow(session: BlockSession): Record<string, unknown> {
     ended_at: session.endedAt?.toISOString() ?? null,
     guest_count: session.guestCount,
     note: session.note ?? null,
+    customer_name: session.customerName ?? null,
+    happy_hour: session.happyHour ?? false,
   }
 }
 

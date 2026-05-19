@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   started_at TIMESTAMPTZ NOT NULL,
   ended_at TIMESTAMPTZ,
   guest_count INTEGER NOT NULL DEFAULT 1,
-  note TEXT
+  note TEXT,
+  customer_name TEXT,
+  happy_hour BOOLEAN NOT NULL DEFAULT false
 );
 
 -- payments テーブル
