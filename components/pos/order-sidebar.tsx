@@ -35,12 +35,14 @@ import {
   CheckCheck,
 } from "lucide-react"
 
-const HAPPY_HOUR_CATEGORIES = ["system", "システム", "drink", "ドリンク"]
-const DRINK_CATEGORIES = ["drink", "ドリンク"]
-const HAPPY_HOUR_BASE = 3000
-const DRINK_CAP_PER_PERSON = 600
-const HH_EXCLUDED_NAMES = ["トップ替え", "アイスホース", "ダークリーフ"]
-const NIGHT_CHARGE_NAME = "ナイトチャージ"
+import {
+  HAPPY_HOUR_BASE,
+  DRINK_CAP_PER_PERSON,
+  NIGHT_CHARGE_NAME,
+  isHhTarget as hhIsTarget,
+  calcHhSubtotal,
+  resolveCategory,
+} from "@/lib/hh-calc"
 
 interface OrderSidebarProps {
   isOpen: boolean
@@ -145,22 +147,14 @@ export function OrderSidebar({
       : unpaidItems
 
   // ハッピーアワー計算（item.category を優先、なければ productCategoryMap にフォールバック）
-  const itemCategory = (i: { productId: string; category?: string }) =>
-    i.category ?? productCategoryMap[i.productId] ?? ""
   const isHhTarget = (i: { name: string; productId: string; category?: string }) =>
-    HAPPY_HOUR_CATEGORIES.includes(itemCategory(i)) && !HH_EXCLUDED_NAMES.includes(i.name)
+    hhIsTarget(i, productCategoryMap)
   const hasNightCharge = unpaidItems.some((i) => i.name === NIGHT_CHARGE_NAME)
-  const drinkSubtotal = targetItems
-    .filter((i) => DRINK_CATEGORIES.includes(itemCategory(i)))
-    .reduce((sum, i) => sum + i.subtotal, 0)
-  const drinkOverage = Math.max(0, drinkSubtotal - DRINK_CAP_PER_PERSON * guestCount)
-  const nonHhSubtotal = targetItems
-    .filter((i) => !isHhTarget(i))
-    .reduce((sum, i) => sum + i.subtotal, 0)
-  const happyHourCharge = HAPPY_HOUR_BASE * guestCount
+  const hhResult = calcHhSubtotal(targetItems, guestCount, productCategoryMap)
+  const { happyHourCharge, drinkOverage, nonHhSubtotal } = hhResult
 
   const subtotal = happyHour
-    ? happyHourCharge + drinkOverage + nonHhSubtotal
+    ? hhResult.subtotal
     : targetItems.reduce((sum, i) => sum + i.subtotal, 0)
 
   const selectedCoupon = coupons.find((c) => c.id === selectedCouponId && c.isActive)
