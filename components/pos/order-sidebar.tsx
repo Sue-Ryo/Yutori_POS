@@ -35,10 +35,8 @@ import {
   CheckCheck,
 } from "lucide-react"
 
-const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "ドリンク", "shisha", "drink", "charge"]
-const DRINK_CATEGORIES = ["ドリンク", "drink"]
+const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "shisha", "charge"]
 const HAPPY_HOUR_BASE = 3000
-const DRINK_THRESHOLD = 600
 const HH_EXCLUDED_NAMES = ["トップ替え", "アイスホース", "ダークリーフ"]
 const NIGHT_CHARGE_NAME = "ナイトチャージ"
 
@@ -88,7 +86,7 @@ export function OrderSidebar({
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [selectedCouponId, setSelectedCouponId] = useState<string>("")
   const [cashReceived, setCashReceived] = useState<string>("")
-  const [guestCount, setGuestCount] = useState<number>(session?.guestCount ?? 1)
+  const guestCount = 1 + (session?.linkedBlockIds?.length ?? 0)
   const [editingMemoId, setEditingMemoId] = useState<string | null>(null)
   const [showNightChargeWarning, setShowNightChargeWarning] = useState(false)
   const [noteText, setNoteText] = useState<string>(session?.note ?? "")
@@ -96,14 +94,6 @@ export function OrderSidebar({
   useEffect(() => {
     setNoteText(session?.note ?? "")
   }, [session?.id])
-
-  // 連結席がある場合は席数=来客人数として自動同期
-  useEffect(() => {
-    if (!session) return
-    if (session.linkedBlockIds?.length) {
-      setGuestCount(1 + session.linkedBlockIds.length)
-    }
-  }, [session?.id, session?.linkedBlockIds?.length])
 
   // サイドバーが閉じたらモーダルも閉じる
   useEffect(() => {
@@ -158,16 +148,10 @@ export function OrderSidebar({
   const isHhTarget = (i: { name: string; productId: string; category?: string }) =>
     HAPPY_HOUR_CATEGORIES.includes(itemCategory(i)) && !HH_EXCLUDED_NAMES.includes(i.name)
   const hasNightCharge = unpaidItems.some((i) => i.name === NIGHT_CHARGE_NAME)
-  const drinkSubtotal = targetItems
-    .filter((i) => DRINK_CATEGORIES.includes(itemCategory(i)) && !HH_EXCLUDED_NAMES.includes(i.name))
-    .reduce((sum, i) => sum + i.subtotal, 0)
   const nonHhSubtotal = targetItems
     .filter((i) => !isHhTarget(i))
     .reduce((sum, i) => sum + i.subtotal, 0)
-  const drinkPerPerson = guestCount > 0 ? drinkSubtotal / guestCount : 0
-  const drinkOveragePerPerson = Math.max(0, drinkPerPerson - DRINK_THRESHOLD)
-  const hhPerPerson = HAPPY_HOUR_BASE + drinkOveragePerPerson
-  const happyHourCharge = Math.round(hhPerPerson * guestCount)
+  const happyHourCharge = HAPPY_HOUR_BASE * guestCount
 
   const subtotal = happyHour
     ? happyHourCharge + nonHhSubtotal
@@ -404,27 +388,10 @@ export function OrderSidebar({
               )}
               <div className="flex items-center gap-1">
                 <Users className="h-3 w-3" />
-                {session?.linkedBlockIds?.length ? (
-                  <>
-                    <span className="text-sm font-medium">{guestCount}</span>
-                    <span>名</span>
-                    <span className="rounded bg-info/15 px-1 py-0.5 text-[10px] font-medium text-info">連結</span>
-                  </>
-                ) : (
-                  <>
-                    <Input
-                      type="number"
-                      value={guestCount}
-                      onChange={(e) => {
-                        const n = Math.max(1, parseInt(e.target.value) || 1)
-                        setGuestCount(n)
-                        if (session) onUpdateSession({ ...session, guestCount: n })
-                      }}
-                      className="h-6 w-14 border-0 bg-transparent p-0 text-sm"
-                      min={1}
-                    />
-                    <span>名</span>
-                  </>
+                <span className="text-sm font-medium">{guestCount}</span>
+                <span>名</span>
+                {(session?.linkedBlockIds?.length ?? 0) > 0 && (
+                  <span className="rounded bg-info/15 px-1 py-0.5 text-[10px] font-medium text-info">連結</span>
                 )}
               </div>
             </div>
@@ -643,7 +610,7 @@ export function OrderSidebar({
             }}
           >
             <Zap className={cn("mr-1.5 h-4 w-4", happyHour && "fill-white")} />
-            {happyHour ? `ハッピーアワー適用中 (¥${Math.round(hhPerPerson).toLocaleString()}/人)` : "ハッピーアワー"}
+            {happyHour ? `ハッピーアワー適用中 (¥${HAPPY_HOUR_BASE.toLocaleString()}/人)` : "ハッピーアワー"}
           </Button>
 
           <div className="flex gap-2">
@@ -686,12 +653,6 @@ export function OrderSidebar({
                   <span>HH基本 (¥{HAPPY_HOUR_BASE.toLocaleString()} × {guestCount}名)</span>
                   <span>¥{(HAPPY_HOUR_BASE * guestCount).toLocaleString()}</span>
                 </div>
-                {drinkOveragePerPerson > 0 && (
-                  <div className="flex justify-between text-amber-600 dark:text-amber-400">
-                    <span>ドリンク超過 (+¥{Math.round(drinkOveragePerPerson).toLocaleString()}/人 × {guestCount}名)</span>
-                    <span>¥{Math.round(drinkOveragePerPerson * guestCount).toLocaleString()}</span>
-                  </div>
-                )}
                 {nonHhSubtotal > 0 && (
                   <div className="flex justify-between text-muted-foreground">
                     <span>その他</span>

@@ -297,12 +297,16 @@ export function POSSystem() {
           : b,
       ),
     )
+    setCustomerNames((prev) => {
+      const next = { ...prev }
+      allBlockIds.forEach((id) => delete next[id])
+      return next
+    })
   }, [sessions])
 
   const handleBussingComplete = useCallback(() => {
     if (!selectedBlockId) return
     bussingById(selectedBlockId)
-    setCustomerNames((prev) => { const next = { ...prev }; delete next[selectedBlockId]; return next })
     handleCloseSidebar()
   }, [selectedBlockId, bussingById, handleCloseSidebar])
 
