@@ -35,8 +35,10 @@ import {
   CheckCheck,
 } from "lucide-react"
 
-const HAPPY_HOUR_CATEGORIES = ["シーシャ", "チャージ", "shisha", "charge"]
+const HAPPY_HOUR_CATEGORIES = ["system", "システム", "drink", "ドリンク"]
+const DRINK_CATEGORIES = ["drink", "ドリンク"]
 const HAPPY_HOUR_BASE = 3000
+const DRINK_CAP_PER_PERSON = 600
 const HH_EXCLUDED_NAMES = ["トップ替え", "アイスホース", "ダークリーフ"]
 const NIGHT_CHARGE_NAME = "ナイトチャージ"
 
@@ -148,13 +150,17 @@ export function OrderSidebar({
   const isHhTarget = (i: { name: string; productId: string; category?: string }) =>
     HAPPY_HOUR_CATEGORIES.includes(itemCategory(i)) && !HH_EXCLUDED_NAMES.includes(i.name)
   const hasNightCharge = unpaidItems.some((i) => i.name === NIGHT_CHARGE_NAME)
+  const drinkSubtotal = targetItems
+    .filter((i) => DRINK_CATEGORIES.includes(itemCategory(i)))
+    .reduce((sum, i) => sum + i.subtotal, 0)
+  const drinkOverage = Math.max(0, drinkSubtotal - DRINK_CAP_PER_PERSON * guestCount)
   const nonHhSubtotal = targetItems
     .filter((i) => !isHhTarget(i))
     .reduce((sum, i) => sum + i.subtotal, 0)
   const happyHourCharge = HAPPY_HOUR_BASE * guestCount
 
   const subtotal = happyHour
-    ? happyHourCharge + nonHhSubtotal
+    ? happyHourCharge + drinkOverage + nonHhSubtotal
     : targetItems.reduce((sum, i) => sum + i.subtotal, 0)
 
   const selectedCoupon = coupons.find((c) => c.id === selectedCouponId && c.isActive)
@@ -653,6 +659,12 @@ export function OrderSidebar({
                   <span>HH基本 (¥{HAPPY_HOUR_BASE.toLocaleString()} × {guestCount}名)</span>
                   <span>¥{(HAPPY_HOUR_BASE * guestCount).toLocaleString()}</span>
                 </div>
+                {drinkOverage > 0 && (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>ドリンク超過 (¥{DRINK_CAP_PER_PERSON}/人上限超え)</span>
+                    <span>¥{drinkOverage.toLocaleString()}</span>
+                  </div>
+                )}
                 {nonHhSubtotal > 0 && (
                   <div className="flex justify-between text-muted-foreground">
                     <span>その他</span>
