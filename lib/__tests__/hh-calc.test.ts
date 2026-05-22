@@ -41,6 +41,14 @@ describe("isHhTarget", () => {
     expect(isHhTarget(item("Heineken", "drink", 800), CAT)).toBe(true)
   })
 
+  it("alcohol カテゴリ → HH対象", () => {
+    expect(isHhTarget(item("Heineken", "alcohol", 800), CAT)).toBe(true)
+  })
+
+  it("softdrink カテゴリ → HH対象", () => {
+    expect(isHhTarget(item("Cola", "softdrink", 600), CAT)).toBe(true)
+  })
+
   it("未知カテゴリ → HH対象外", () => {
     expect(isHhTarget(item("Other", "food", 500), CAT)).toBe(false)
   })
@@ -123,5 +131,34 @@ describe("calcHhSubtotal", () => {
     expect(r.drinkOverage).toBe(200)
     expect(r.nonHhSubtotal).toBe(800) // Dark Leaf
     expect(r.subtotal).toBe(HAPPY_HOUR_BASE + 200 + 800)
+  })
+
+  it("alcohol ¥800(1名) → 超過¥200が加算", () => {
+    const items = [item("Shisha", "system", 2800), item("Heineken", "alcohol", 800)]
+    const r = calcHhSubtotal(items, 1, CAT)
+    expect(r.drinkSubtotal).toBe(800)
+    expect(r.drinkOverage).toBe(200)
+    expect(r.subtotal).toBe(HAPPY_HOUR_BASE + 200)
+  })
+
+  it("softdrink ¥600以下(1名) → 超過なし", () => {
+    const items = [item("Shisha", "system", 2800), item("Cola", "softdrink", 500)]
+    const r = calcHhSubtotal(items, 1, CAT)
+    expect(r.drinkSubtotal).toBe(500)
+    expect(r.drinkOverage).toBe(0)
+    expect(r.subtotal).toBe(HAPPY_HOUR_BASE)
+  })
+
+  it("alcohol+softdrink 合算で上限判定(1名)", () => {
+    // alcohol¥400 + softdrink¥400 = ¥800 → 超過¥200
+    const items = [
+      item("Shisha", "system", 2800),
+      item("Beer", "alcohol", 400),
+      item("Cola", "softdrink", 400),
+    ]
+    const r = calcHhSubtotal(items, 1, CAT)
+    expect(r.drinkSubtotal).toBe(800)
+    expect(r.drinkOverage).toBe(200)
+    expect(r.subtotal).toBe(HAPPY_HOUR_BASE + 200)
   })
 })

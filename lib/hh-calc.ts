@@ -1,5 +1,5 @@
-export const HAPPY_HOUR_CATEGORIES = ["system", "システム", "drink", "ドリンク"]
-export const DRINK_CATEGORIES = ["drink", "ドリンク"]
+export const HAPPY_HOUR_CATEGORIES = ["system", "システム", "drink", "ドリンク", "alcohol", "softdrink"]
+export const DRINK_CATEGORIES = ["drink", "ドリンク", "alcohol", "softdrink"]
 export const HAPPY_HOUR_BASE = 3000
 export const DRINK_CAP_PER_PERSON = 600
 // system カテゴリ内で HH 対象外とする商品名（Shisha・Charge 以外）
