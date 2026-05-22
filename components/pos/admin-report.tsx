@@ -135,11 +135,11 @@ function ProductsTab({
     if (editingProductId === id) setEditingProductId(null)
   }
 
-  const handleSaveProduct = (id: string, name: string, price: string) => {
-    if (!name.trim() || !price) return
+  const handleSaveProduct = (id: string, name: string, price: string, category: string) => {
+    if (!name.trim() || !price || !category.trim()) return
     onUpdateProducts(
       products.map((p) =>
-        p.id === id ? { ...p, name: name.trim(), price: Number(price) } : p,
+        p.id === id ? { ...p, name: name.trim(), price: Number(price), category: category.trim() } : p,
       ),
     )
     setEditingProductId(null)
@@ -333,39 +333,51 @@ function EditProductRow({
   onCancel,
 }: {
   product: Product
-  onSave: (id: string, name: string, price: string) => void
+  onSave: (id: string, name: string, price: string, category: string) => void
   onCancel: () => void
 }) {
   const [name, setName] = useState(product.name)
   const [price, setPrice] = useState(String(product.price))
+  const [category, setCategory] = useState(product.category)
 
   return (
-    <div className="flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/5 p-2">
-      <Input
-        autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        className="h-7 flex-1 text-sm"
-      />
-      <div className="flex items-center gap-1 shrink-0">
-        <span className="text-sm">¥</span>
+    <div className="flex flex-col gap-1.5 rounded-lg border border-primary/40 bg-primary/5 p-2">
+      <div className="flex items-center gap-1.5">
         <Input
-          type="number"
-          value={price}
-          onChange={(e) => setPrice(e.target.value)}
-          className="h-7 w-20 text-sm"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") onSave(product.id, name, price)
-            if (e.key === "Escape") onCancel()
-          }}
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="h-7 flex-1 text-sm"
+          placeholder="商品名"
         />
+        <div className="flex items-center gap-1 shrink-0">
+          <span className="text-sm">¥</span>
+          <Input
+            type="number"
+            value={price}
+            onChange={(e) => setPrice(e.target.value)}
+            className="h-7 w-20 text-sm"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onSave(product.id, name, price, category)
+              if (e.key === "Escape") onCancel()
+            }}
+          />
+        </div>
       </div>
-      <Button size="sm" className="h-7 px-2 shrink-0" onClick={() => onSave(product.id, name, price)}>
-        <Check className="h-3 w-3" />
-      </Button>
-      <Button size="sm" variant="ghost" className="h-7 px-2 shrink-0" onClick={onCancel}>
-        <X className="h-3 w-3" />
-      </Button>
+      <div className="flex items-center gap-1.5">
+        <Input
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          className="h-7 flex-1 text-sm"
+          placeholder="カテゴリ名"
+        />
+        <Button size="sm" className="h-7 px-2 shrink-0" onClick={() => onSave(product.id, name, price, category)}>
+          <Check className="h-3 w-3" />
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 px-2 shrink-0" onClick={onCancel}>
+          <X className="h-3 w-3" />
+        </Button>
+      </div>
     </div>
   )
 }
