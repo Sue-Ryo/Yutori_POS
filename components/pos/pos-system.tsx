@@ -64,11 +64,13 @@ export function POSSystem() {
   const [dbLoading, setDbLoading] = useState(false)
   const [dbError, setDbError] = useState<string | null>(null)
   const dbSyncingRef = useRef(false)
+  const paymentsRef = useRef<Payment[]>([])
 
   // Supabase から全データを取得
   const loadAllFromDB = useCallback(async () => {
     setDbLoading(true)
     dbSyncingRef.current = true
+    let shouldMigratePayments = false
     try {
       const [
         dbBlocks, dbSessions, dbPayments,
@@ -84,7 +86,15 @@ export function POSSystem() {
       ])
       if (dbBlocks !== null) setBlocks(dbBlocks)
       if (dbSessions !== null) setSessions(dbSessions)
-      if (dbPayments !== null) setPayments(dbPayments)
+      if (dbPayments !== null) {
+        if (dbPayments.length > 0) {
+          // DB にデータあり → DB を正とする
+          setPayments(dbPayments)
+        } else {
+          // DB が空 → localStorage のデータを保持し、後で DB へ移行する
+          shouldMigratePayments = true
+        }
+      }
       if (dbSettings !== null) setSettings(dbSettings)
       if (dbCoupons !== null) setCoupons(dbCoupons)
       if (dbElements !== null) setLayoutElements(dbElements)
@@ -95,7 +105,14 @@ export function POSSystem() {
       setDbError("データの取得に失敗しました（ローカルデータを使用）")
     } finally {
       setDbLoading(false)
-      setTimeout(() => { dbSyncingRef.current = false }, 300)
+      setTimeout(() => {
+        dbSyncingRef.current = false
+        // localStorage にあった会計データを DB へ移行
+        if (shouldMigratePayments && paymentsRef.current.length > 0) {
+          console.log("[DB]payments migrate:", paymentsRef.current.length, "件をDBへ書き込み")
+          upsertPayments(paymentsRef.current).catch((e) => console.error("[DB]payments migrate:", e))
+        }
+      }, 300)
     }
   }, [])
 
@@ -174,6 +191,9 @@ export function POSSystem() {
     return () => { supabase.removeChannel(channel) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // paymentsRef を最新 state と常に同期（loadAllFromDB 内で移行書き込み用）
+  useEffect(() => { paymentsRef.current = payments }, [payments])
 
   // 状態変化時に localStorage へ保存（初期ロード後のみ）
   // ※ このsave effectsは必ずloadEffectより前に定義すること（effect実行順序に依存）
