@@ -51,7 +51,10 @@ CREATE TABLE IF NOT EXISTS payments (
   canceled_at TIMESTAMPTZ,
   cancel_reason TEXT,
   paid_item_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-  coupon_id TEXT
+  coupon_id TEXT,
+  customer_name TEXT,
+  session_started_at TIMESTAMPTZ,
+  synced_to_sheet_at TIMESTAMPTZ
 );
 
 -- layout_elements テーブル
