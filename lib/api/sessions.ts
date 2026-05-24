@@ -24,7 +24,7 @@ export function rowToSession(row: Record<string, unknown>): BlockSession {
   }
 }
 
-function sessionToRow(session: BlockSession): Record<string, unknown> {
+function sessionToRow(session: BlockSession, storeId: number): Record<string, unknown> {
   return {
     id: session.id,
     block_id: session.blockId,
@@ -41,17 +41,18 @@ function sessionToRow(session: BlockSession): Record<string, unknown> {
     note: session.note ?? null,
     customer_name: session.customerName ?? null,
     happy_hour: session.happyHour ?? false,
+    store_id: storeId,
   }
 }
 
-export async function fetchSessions(): Promise<BlockSession[]> {
-  const { data, error } = await supabase.from("sessions").select("*")
+export async function fetchSessions(storeId: number): Promise<BlockSession[]> {
+  const { data, error } = await supabase.from("sessions").select("*").eq("store_id", storeId)
   if (error) throw error
   return (data as Record<string, unknown>[]).map(rowToSession)
 }
 
-export async function upsertSessions(sessions: BlockSession[]): Promise<void> {
+export async function upsertSessions(sessions: BlockSession[], storeId: number): Promise<void> {
   if (sessions.length === 0) return
-  const { error } = await supabase.from("sessions").upsert(sessions.map(sessionToRow))
+  const { error } = await supabase.from("sessions").upsert(sessions.map((s) => sessionToRow(s, storeId)))
   if (error) throw error
 }

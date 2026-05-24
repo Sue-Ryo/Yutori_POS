@@ -18,7 +18,7 @@ export function rowToBlock(row: Record<string, unknown>): ServiceBlock {
   }
 }
 
-function blockToRow(block: ServiceBlock): Record<string, unknown> {
+function blockToRow(block: ServiceBlock, storeId: number): Record<string, unknown> {
   return {
     id: block.id,
     name: block.name,
@@ -32,26 +32,26 @@ function blockToRow(block: ServiceBlock): Record<string, unknown> {
     capacity: block.capacity,
     started_at: block.startedAt?.toISOString() ?? null,
     checked_out_at: block.checkedOutAt?.toISOString() ?? null,
+    store_id: storeId,
   }
 }
 
-export async function fetchBlocks(): Promise<ServiceBlock[]> {
-  const { data, error } = await supabase.from("blocks").select("*").order("id")
+export async function fetchBlocks(storeId: number): Promise<ServiceBlock[]> {
+  const { data, error } = await supabase.from("blocks").select("*").eq("store_id", storeId).order("id")
   if (error) throw error
   return (data as Record<string, unknown>[]).map(rowToBlock)
 }
 
-export async function upsertBlocks(blocks: ServiceBlock[]): Promise<void> {
+export async function upsertBlocks(blocks: ServiceBlock[], storeId: number): Promise<void> {
   if (blocks.length === 0) return
-  const { error } = await supabase.from("blocks").upsert(blocks.map(blockToRow))
+  const { error } = await supabase.from("blocks").upsert(blocks.map((b) => blockToRow(b, storeId)))
   if (error) throw error
 }
 
-// ブロックの追加・削除を含む完全同期（レイアウト保存時に使用）
-export async function syncBlocks(blocks: ServiceBlock[]): Promise<void> {
+export async function syncBlocks(blocks: ServiceBlock[], storeId: number): Promise<void> {
   const newIds = blocks.map((b) => b.id)
 
-  const { data: existing } = await supabase.from("blocks").select("id")
+  const { data: existing } = await supabase.from("blocks").select("id").eq("store_id", storeId)
   const existingIds = ((existing ?? []) as { id: string }[]).map((r) => r.id)
   const toDelete = existingIds.filter((id) => !newIds.includes(id))
 
@@ -60,7 +60,7 @@ export async function syncBlocks(blocks: ServiceBlock[]): Promise<void> {
       ? supabase.from("blocks").delete().in("id", toDelete).then(({ error }) => { if (error) throw error })
       : Promise.resolve(),
     blocks.length > 0
-      ? supabase.from("blocks").upsert(blocks.map(blockToRow)).then(({ error }) => { if (error) throw error })
+      ? supabase.from("blocks").upsert(blocks.map((b) => blockToRow(b, storeId))).then(({ error }) => { if (error) throw error })
       : Promise.resolve(),
   ])
 }

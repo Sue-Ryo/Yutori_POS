@@ -1,12 +1,11 @@
 import { supabase } from "@/lib/supabase"
 import type { Product } from "@/lib/pos-types"
 
-// ── 商品 ──────────────────────────────────────────────────────────────
-
-export async function fetchProducts(): Promise<Product[]> {
+export async function fetchProducts(storeId: number): Promise<Product[]> {
   const { data, error } = await supabase
     .from("products")
     .select("*")
+    .eq("store_id", storeId)
     .order("display_order", { ascending: true })
     .range(0, 999)
 
@@ -15,25 +14,18 @@ export async function fetchProducts(): Promise<Product[]> {
     throw error
   }
 
-  console.log(`[fetchProducts] 取得件数: ${data.length}件`, data[0])
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return data.map((row: any) => ({
     id: String(row.id),
-    // 新スキーマ(category) / 旧スキーマ(category_id) 両対応
     category: row.category ?? String(row.category_id ?? ""),
-    // 新スキーマ(item_name) / 旧スキーマ(name) 両対応
     name: row.item_name ?? row.name ?? "",
-    // 新スキーマ(price_yen) / 旧スキーマ(price) 両対応
     price: row.price_yen ?? row.price ?? 0,
     isActive: row.is_active ?? true,
     displayOrder: row.display_order ?? 0,
   }))
 }
 
-export async function createProduct(
-  product: Omit<Product, "id">,
-): Promise<Product> {
+export async function createProduct(product: Omit<Product, "id">, storeId: number): Promise<Product> {
   const { data, error } = await supabase
     .from("products")
     .insert({
@@ -42,6 +34,7 @@ export async function createProduct(
       price_yen: product.price,
       is_active: product.isActive,
       display_order: product.displayOrder,
+      store_id: storeId,
     })
     .select()
     .single()
@@ -58,10 +51,7 @@ export async function createProduct(
   }
 }
 
-export async function updateProduct(
-  id: string,
-  updates: Partial<Omit<Product, "id">>,
-): Promise<void> {
+export async function updateProduct(id: string, updates: Partial<Omit<Product, "id">>): Promise<void> {
   const dbUpdates: Record<string, unknown> = {}
   if (updates.category !== undefined) dbUpdates.category = updates.category
   if (updates.name !== undefined) dbUpdates.item_name = updates.name
@@ -69,17 +59,11 @@ export async function updateProduct(
   if (updates.isActive !== undefined) dbUpdates.is_active = updates.isActive
   if (updates.displayOrder !== undefined) dbUpdates.display_order = updates.displayOrder
 
-  const { error } = await supabase
-    .from("products")
-    .update(dbUpdates)
-    .eq("id", Number(id))
+  const { error } = await supabase.from("products").update(dbUpdates).eq("id", Number(id))
   if (error) throw error
 }
 
 export async function deleteProduct(id: string): Promise<void> {
-  const { error } = await supabase
-    .from("products")
-    .delete()
-    .eq("id", Number(id))
+  const { error } = await supabase.from("products").delete().eq("id", Number(id))
   if (error) throw error
 }

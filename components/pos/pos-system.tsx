@@ -47,12 +47,9 @@ import { AdminReport } from "./admin-report"
 import { Button } from "@/components/ui/button"
 import { LayoutGrid, Edit3, BarChart3, UtensilsCrossed, RefreshCw, Link2, ArrowRightLeft } from "lucide-react"
 
-// 目黒店の store_id
-const STORE_ID = 1
-
 type Tab = "map" | "editor" | "report"
 
-export function POSSystem() {
+export function POSSystem({ storeId }: { storeId: number }) {
   const [activeTab, setActiveTab] = useState<Tab>("map")
   const initializedRef = useRef(false)
 
@@ -79,14 +76,14 @@ export function POSSystem() {
         dbBlocks, dbSessions, dbPayments,
         dbSettings, dbCoupons, dbElements, dbProducts, dbExpenses,
       ] = await Promise.all([
-        fetchBlocks().catch((e) => { console.error("[DB]blocks fetch:", e); return null }),
-        fetchSessions().catch((e) => { console.error("[DB]sessions fetch:", e); return null }),
-        fetchPayments().catch((e) => { console.error("[DB]payments fetch:", e); return null }),
-        fetchSettings().catch((e) => { console.error("[DB]settings fetch:", e); return null }),
-        fetchCoupons().catch((e) => { console.error("[DB]coupons fetch:", e); return null }),
-        fetchLayoutElements().catch((e) => { console.error("[DB]layout fetch:", e); return null }),
-        fetchProducts().catch((e) => { console.error("[DB]products fetch:", e); return null }),
-        fetchExpenses().catch((e) => { console.error("[DB]expenses fetch:", e); return null }),
+        fetchBlocks(storeId).catch((e) => { console.error("[DB]blocks fetch:", e); return null }),
+        fetchSessions(storeId).catch((e) => { console.error("[DB]sessions fetch:", e); return null }),
+        fetchPayments(storeId).catch((e) => { console.error("[DB]payments fetch:", e); return null }),
+        fetchSettings(storeId).catch((e) => { console.error("[DB]settings fetch:", e); return null }),
+        fetchCoupons(storeId).catch((e) => { console.error("[DB]coupons fetch:", e); return null }),
+        fetchLayoutElements(storeId).catch((e) => { console.error("[DB]layout fetch:", e); return null }),
+        fetchProducts(storeId).catch((e) => { console.error("[DB]products fetch:", e); return null }),
+        fetchExpenses(storeId).catch((e) => { console.error("[DB]expenses fetch:", e); return null }),
       ])
       if (dbBlocks !== null) setBlocks(dbBlocks)
       if (dbSessions !== null) setSessions(dbSessions)
@@ -115,7 +112,7 @@ export function POSSystem() {
         // localStorage にあった会計データを DB へ移行
         if (shouldMigratePayments && paymentsRef.current.length > 0) {
           console.log("[DB]payments migrate:", paymentsRef.current.length, "件をDBへ書き込み")
-          upsertPayments(paymentsRef.current).catch((e) => console.error("[DB]payments migrate:", e))
+          upsertPayments(paymentsRef.current, storeId).catch((e) => console.error("[DB]payments migrate:", e))
         }
       }, 300)
     }
@@ -141,35 +138,35 @@ export function POSSystem() {
     const channel = supabase
       .channel("pos_realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "blocks" }, () => {
-        fetchBlocks().then((data) => {
+        fetchBlocks(storeId).then((data) => {
           dbSyncingRef.current = true
           setBlocks(data)
           setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]blocks:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "sessions" }, () => {
-        fetchSessions().then((data) => {
+        fetchSessions(storeId).then((data) => {
           dbSyncingRef.current = true
           setSessions(data)
           setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]sessions:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, () => {
-        fetchPayments().then((data) => {
+        fetchPayments(storeId).then((data) => {
           dbSyncingRef.current = true
           setPayments(data)
           setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]payments:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "layout_elements" }, () => {
-        fetchLayoutElements().then((data) => {
+        fetchLayoutElements(storeId).then((data) => {
           dbSyncingRef.current = true
           setLayoutElements(data)
           setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]layout_elements:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "pos_settings" }, () => {
-        fetchSettings().then((data) => {
+        fetchSettings(storeId).then((data) => {
           if (data) {
             dbSyncingRef.current = true
             setSettings(data)
@@ -178,21 +175,21 @@ export function POSSystem() {
         }).catch((e) => console.error("[RT]pos_settings:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, () => {
-        fetchCoupons().then((data) => {
+        fetchCoupons(storeId).then((data) => {
           dbSyncingRef.current = true
           setCoupons(data)
           setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]coupons:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
-        fetchProducts().then((data) => {
+        fetchProducts(storeId).then((data) => {
           dbSyncingRef.current = true
           setProducts(data)
           setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]products:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "daily_expenses" }, () => {
-        fetchExpenses().then((data) => {
+        fetchExpenses(storeId).then((data) => {
           dbSyncingRef.current = true
           setExpenses(data)
           setTimeout(() => { dbSyncingRef.current = false }, 300)
@@ -219,27 +216,27 @@ export function POSSystem() {
   // 状態変化時に Supabase へ同期（DB読み込み中は除外）
   useEffect(() => {
     if (!initializedRef.current || dbSyncingRef.current) return
-    upsertBlocks(blocks).catch((e) => console.error("[DB]blocks:", e))
+    upsertBlocks(blocks, storeId).catch((e) => console.error("[DB]blocks:", e))
   }, [blocks])
   useEffect(() => {
     if (!initializedRef.current || dbSyncingRef.current) return
-    upsertLayoutElements(layoutElements).catch((e) => console.error("[DB]layout:", e))
+    upsertLayoutElements(layoutElements, storeId).catch((e) => console.error("[DB]layout:", e))
   }, [layoutElements])
   useEffect(() => {
     if (!initializedRef.current || dbSyncingRef.current) return
-    upsertSessions(sessions).catch((e) => console.error("[DB]sessions:", e))
+    upsertSessions(sessions, storeId).catch((e) => console.error("[DB]sessions:", e))
   }, [sessions])
   useEffect(() => {
     if (!initializedRef.current || dbSyncingRef.current) return
-    upsertPayments(payments).catch((e) => console.error("[DB]payments:", e))
+    upsertPayments(payments, storeId).catch((e) => console.error("[DB]payments:", e))
   }, [payments])
   useEffect(() => {
     if (!initializedRef.current || dbSyncingRef.current) return
-    upsertSettings(settings).catch((e) => console.error("[DB]settings:", e))
+    upsertSettings(storeId, settings).catch((e) => console.error("[DB]settings:", e))
   }, [settings])
   useEffect(() => {
     if (!initializedRef.current || dbSyncingRef.current) return
-    syncCoupons(coupons).catch((e) => console.error("[DB]coupons:", e))
+    syncCoupons(coupons, storeId).catch((e) => console.error("[DB]coupons:", e))
   }, [coupons])
 
   // localStorage から読み込む（クライアントサイドのみ・save effectsより後に定義すること）
@@ -284,7 +281,7 @@ export function POSSystem() {
     if (currentSession) {
       const updated = { ...currentSession, happyHour: value }
       setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
-      upsertSessions([updated]).catch((e) => console.error("[DB]sessions happyHour:", e))
+      upsertSessions([updated], storeId).catch((e) => console.error("[DB]sessions happyHour:", e))
     }
   }, [selectedBlockId, currentSession])
 
@@ -295,7 +292,7 @@ export function POSSystem() {
     if (currentSession) {
       const updated = { ...currentSession, customerName: name }
       setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
-      upsertSessions([updated]).catch((e) => console.error("[DB]sessions customerName:", e))
+      upsertSessions([updated], storeId).catch((e) => console.error("[DB]sessions customerName:", e))
     }
   }, [selectedBlockId, currentSession])
 
@@ -360,7 +357,7 @@ export function POSSystem() {
         return [...prev, sessionWithCache]
       })
       // useEffect の dbSyncingRef ガードに依存せず直接同期
-      upsertSessions([sessionWithCache]).catch((e) => console.error("[DB]sessions update:", e))
+      upsertSessions([sessionWithCache], storeId).catch((e) => console.error("[DB]sessions update:", e))
 
       const unpaidItems = updatedSession.orderItems.filter((i) => !i.isPaid)
       const hasItems = unpaidItems.length > 0
@@ -497,7 +494,7 @@ export function POSSystem() {
   }, [])
 
   const handleUpsertExpense = useCallback(async (expense: DailyExpense) => {
-    await upsertExpense(expense)
+    await upsertExpense(expense, storeId)
     setExpenses((prev) => {
       const idx = prev.findIndex((e) => e.businessDate === expense.businessDate)
       return idx >= 0
@@ -554,7 +551,7 @@ export function POSSystem() {
       setSessions((prev) =>
         prev.map((s) => (s.id === existingSession.id ? updatedSession : s))
       )
-      upsertSessions([updatedSession]).catch((e) => console.error("[DB]sessions link:", e))
+      upsertSessions([updatedSession], storeId).catch((e) => console.error("[DB]sessions link:", e))
       // サブブロックのステータスをプライマリに合わせる
       const primaryBlock = blocks.find((b) => b.id === primaryBlockId)
       if (primaryBlock) {
@@ -576,7 +573,7 @@ export function POSSystem() {
         linkedBlockIds: secondaryBlockIds,
       }
       setSessions((prev) => [...prev, newSession])
-      upsertSessions([newSession]).catch((e) => console.error("[DB]sessions link new:", e))
+      upsertSessions([newSession], storeId).catch((e) => console.error("[DB]sessions link new:", e))
       // プライマリ・サブ両方を occupied に（startedAt はオーダー3個到達時にセット）
       setBlocks((prev) =>
         prev.map((b) =>
@@ -607,7 +604,7 @@ export function POSSystem() {
       const guestCount = newLinkedBlockIds ? 1 + newLinkedBlockIds.length : 1
       const updatedSession = { ...target, linkedBlockIds: newLinkedBlockIds, guestCount }
       setSessions((prev) => prev.map((s) => (s.id === sessionId ? updatedSession : s)))
-      upsertSessions([updatedSession]).catch((e) => console.error("[DB]sessions unlink:", e))
+      upsertSessions([updatedSession], storeId).catch((e) => console.error("[DB]sessions unlink:", e))
     }
     setBlocks((prev) =>
       prev.map((b) =>
@@ -682,7 +679,7 @@ export function POSSystem() {
       setLayoutElements(newElements)
       setActiveTab("map")
       // レイアウト保存時は削除も含む完全同期
-      syncBlocks(newBlocks).catch((e) => console.error("[DB]syncBlocks:", e))
+      syncBlocks(newBlocks, storeId).catch((e) => console.error("[DB]syncBlocks:", e))
     },
     []
   )
@@ -712,7 +709,7 @@ export function POSSystem() {
     try {
       await Promise.all([
         ...deleted.map((p) => deleteProduct(p.id)),
-        ...added.map((p) => createProduct(p)),
+        ...added.map((p) => createProduct(p, storeId)),
         ...changed.map((p) => updateProduct(p.id, { name: p.name, price: p.price, isActive: p.isActive, category: p.category })),
       ])
     } catch (err) {

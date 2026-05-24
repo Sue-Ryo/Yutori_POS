@@ -18,7 +18,26 @@
       "Bash(git commit -m ' *)",
       "Bash(git push *)",
       "Bash(rm lib/api/sheets.ts)",
-      "Bash(pnpm remove *)"
+      "Bash(pnpm remove *)",
+      "Bash(findstr /v node_modules)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\" -Exclude node_modules)",
+      "Bash(Select-Object Name)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(findstr /i \"jest\\\\|vitest\\\\|test\")",
+      "Bash(Get-Content package.json)",
+      "Bash(Select-String -Pattern \"jest|vitest|test\")",
+      "Bash(pnpm test *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\" -Recurse -File)",
+      "Bash(npx next *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3333/)",
+      "Bash(npx playwright *)",
+      "Bash(npm install *)",
+      "Bash(pip install *)",
+      "Bash(python -m playwright install chromium)",
+      "Bash(rm -f verify_0*.png)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(curl *)"
     ]
   }
 }

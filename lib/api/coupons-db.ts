@@ -3,7 +3,7 @@ import type { Coupon } from "@/lib/pos-types"
 
 function rowToCoupon(row: Record<string, unknown>): Coupon {
   return {
-    id: row.id as string,
+    id: String(row.id),
     name: row.name as string,
     discountType: row.discount_type as Coupon["discountType"],
     discountValue: row.discount_value as number,
@@ -13,30 +13,28 @@ function rowToCoupon(row: Record<string, unknown>): Coupon {
   }
 }
 
-function couponToRow(coupon: Coupon): Record<string, unknown> {
+function couponToRow(coupon: Coupon, storeId: number): Record<string, unknown> {
   return {
     id: coupon.id,
     name: coupon.name,
     discount_type: coupon.discountType,
     discount_value: coupon.discountValue,
-    valid_from: coupon.validFrom ?? null,
-    valid_to: coupon.validTo ?? null,
     is_active: coupon.isActive,
+    store_id: storeId,
   }
 }
 
-export async function fetchCoupons(): Promise<Coupon[]> {
-  const { data, error } = await supabase.from("coupons").select("*")
+export async function fetchCoupons(storeId: number): Promise<Coupon[]> {
+  const { data, error } = await supabase.from("coupons").select("*").eq("store_id", storeId)
   if (error) throw error
   return (data as Record<string, unknown>[]).map(rowToCoupon)
 }
 
-// クーポンの追加・削除を含む完全同期
-export async function syncCoupons(coupons: Coupon[]): Promise<void> {
+export async function syncCoupons(coupons: Coupon[], storeId: number): Promise<void> {
   const newIds = coupons.map((c) => c.id)
 
-  const { data: existing } = await supabase.from("coupons").select("id")
-  const existingIds = ((existing ?? []) as { id: string }[]).map((r) => r.id)
+  const { data: existing } = await supabase.from("coupons").select("id").eq("store_id", storeId)
+  const existingIds = ((existing ?? []) as { id: string }[]).map((r) => String(r.id))
   const toDelete = existingIds.filter((id) => !newIds.includes(id))
 
   await Promise.all([
@@ -44,7 +42,7 @@ export async function syncCoupons(coupons: Coupon[]): Promise<void> {
       ? supabase.from("coupons").delete().in("id", toDelete).then(({ error }) => { if (error) throw error })
       : Promise.resolve(),
     coupons.length > 0
-      ? supabase.from("coupons").upsert(coupons.map(couponToRow)).then(({ error }) => { if (error) throw error })
+      ? supabase.from("coupons").upsert(coupons.map((c) => couponToRow(c, storeId))).then(({ error }) => { if (error) throw error })
       : Promise.resolve(),
   ])
 }

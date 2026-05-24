@@ -26,7 +26,7 @@ export function rowToPayment(row: Record<string, unknown>): Payment {
   }
 }
 
-function paymentToRow(payment: Payment): Record<string, unknown> {
+function paymentToRow(payment: Payment, storeId: number): Record<string, unknown> {
   return {
     id: payment.id,
     session_id: payment.sessionId,
@@ -48,18 +48,24 @@ function paymentToRow(payment: Payment): Record<string, unknown> {
     customer_name: payment.customerName ?? null,
     session_started_at: payment.sessionStartedAt?.toISOString() ?? null,
     synced_to_sheet_at: payment.syncedToSheetAt?.toISOString() ?? null,
+    store_id: storeId,
   }
 }
 
-export async function fetchUnsyncedPayments(): Promise<Payment[]> {
+export async function fetchPayments(storeId: number): Promise<Payment[]> {
   const { data, error } = await supabase
     .from("payments")
     .select("*")
-    .is("synced_to_sheet_at", null)
-    .is("canceled_at", null)
-    .order("payment_datetime", { ascending: true })
+    .eq("store_id", storeId)
+    .order("payment_datetime", { ascending: false })
   if (error) throw error
   return (data as Record<string, unknown>[]).map(rowToPayment)
+}
+
+export async function upsertPayments(payments: Payment[], storeId: number): Promise<void> {
+  if (payments.length === 0) return
+  const { error } = await supabase.from("payments").upsert(payments.map((p) => paymentToRow(p, storeId)))
+  if (error) throw error
 }
 
 export async function markPaymentsSynced(ids: string[]): Promise<void> {
@@ -68,20 +74,5 @@ export async function markPaymentsSynced(ids: string[]): Promise<void> {
     .from("payments")
     .update({ synced_to_sheet_at: new Date().toISOString() })
     .in("id", ids)
-  if (error) throw error
-}
-
-export async function fetchPayments(): Promise<Payment[]> {
-  const { data, error } = await supabase
-    .from("payments")
-    .select("*")
-    .order("payment_datetime", { ascending: false })
-  if (error) throw error
-  return (data as Record<string, unknown>[]).map(rowToPayment)
-}
-
-export async function upsertPayments(payments: Payment[]): Promise<void> {
-  if (payments.length === 0) return
-  const { error } = await supabase.from("payments").upsert(payments.map(paymentToRow))
   if (error) throw error
 }

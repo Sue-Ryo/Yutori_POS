@@ -11,16 +11,17 @@ function rowToExpense(row: Record<string, unknown>): DailyExpense {
   }
 }
 
-export async function fetchExpenses(): Promise<DailyExpense[]> {
+export async function fetchExpenses(storeId: number): Promise<DailyExpense[]> {
   const { data, error } = await supabase
     .from("daily_expenses")
     .select("*")
+    .eq("store_id", storeId)
     .order("business_date", { ascending: false })
   if (error) throw error
   return (data as Record<string, unknown>[]).map(rowToExpense)
 }
 
-export async function upsertExpense(expense: DailyExpense): Promise<void> {
+export async function upsertExpense(expense: DailyExpense, storeId: number): Promise<void> {
   const { error } = await supabase
     .from("daily_expenses")
     .upsert({
@@ -29,6 +30,7 @@ export async function upsertExpense(expense: DailyExpense): Promise<void> {
       amount: expense.amount,
       handover_note: expense.handoverNote,
       updated_at: new Date().toISOString(),
+      store_id: storeId,
     })
   if (error) throw error
 }
