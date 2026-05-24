@@ -37,8 +37,10 @@ import {
   ToggleRight,
   Sheet,
   RefreshCw,
+  LogOut,
 } from "lucide-react"
 import { getBusinessDate } from "@/lib/pos-store"
+import { clearSession } from "@/lib/session"
 
 type AdminTab = "daily" | "products" | "coupons" | "settings"
 type Period = "day" | "week" | "month"
@@ -1074,6 +1076,7 @@ export function AdminReport({
 
           {/* ── 店舗設定タブ ── */}
           {activeTab === "settings" && (
+            <div className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1153,6 +1156,26 @@ export function AdminReport({
                 </div>
               </CardContent>
             </Card>
+
+            <Card className="border-destructive/40">
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium">ログアウト</p>
+                    <p className="text-xs text-muted-foreground">店舗選択画面に戻ります</p>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => { clearSession(); window.location.reload() }}
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    ログアウト
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+            </div>
           )}
         </div>
       </div>
