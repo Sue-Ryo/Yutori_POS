@@ -90,6 +90,9 @@ export function OrderSidebar({
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [selectedCouponId, setSelectedCouponId] = useState<string>("")
   const [cashReceived, setCashReceived] = useState<string>("")
+  const [combinedMode, setCombinedMode] = useState(false)
+  const [combinedCash, setCombinedCash] = useState<string>("")
+  const [combinedCashless, setCombinedCashless] = useState<string>("")
   const guestCount = 1 + (session?.linkedBlockIds?.length ?? 0)
   const [editingMemoId, setEditingMemoId] = useState<string | null>(null)
   const [showNightChargeWarning, setShowNightChargeWarning] = useState(false)
@@ -170,6 +173,12 @@ export function OrderSidebar({
 
   const cashReceivedNum = parseInt(cashReceived, 10) || 0
   const change = cashReceivedNum - totalAmount
+
+  const combinedCashNum = parseInt(combinedCash, 10) || 0
+  const combinedCashlessNum = parseInt(combinedCashless, 10) || 0
+  const combinedChange = combinedCashNum - (totalAmount - combinedCashlessNum)
+  const combinedTotal = combinedCashNum + combinedCashlessNum
+  const combinedValid = combinedTotal === totalAmount && combinedCashNum > 0 && combinedCashlessNum > 0
 
   // ── 未確定オーダーの集計 ───────────────────────────────────────────
   const pendingTotal = Object.values(pendingCounts).reduce((sum, qty) => sum + qty, 0)
@@ -345,11 +354,31 @@ export function OrderSidebar({
     resetCheckoutState()
   }
 
+  const handleCheckoutCombined = () => {
+    if (!session || !combinedValid) return
+    const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
+    onCheckout(session.id, {
+      cashAmount: combinedCashNum,
+      cashlessAmount: combinedCashlessNum,
+      discountAmount,
+      taxAmount,
+      totalAmount,
+      couponId: selectedCouponId || undefined,
+      guestCount,
+      paidItemIds,
+      customerName: resolvedCustomerName,
+    })
+    resetCheckoutState()
+  }
+
   const resetCheckoutState = () => {
     setSplitMode(false)
     setSelectedItemIds([])
     setSelectedCouponId("")
     setCashReceived("")
+    setCombinedMode(false)
+    setCombinedCash("")
+    setCombinedCashless("")
   }
 
   const formatTime = (d: Date) =>
@@ -692,56 +721,147 @@ export function OrderSidebar({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Label className="whitespace-nowrap text-xs">預かり金</Label>
-            <div className="flex flex-1 items-center gap-1">
-              <span className="text-sm">¥</span>
-              <Input
-                type="number"
-                value={cashReceived}
-                onChange={(e) => setCashReceived(e.target.value)}
-                placeholder="0"
-                className="h-8"
-              />
-            </div>
-            {cashReceivedNum > 0 && (
-              <div
-                className={cn(
-                  "whitespace-nowrap text-sm font-bold",
-                  change >= 0 ? "text-success" : "text-destructive",
+          {!combinedMode ? (
+            <>
+              <div className="flex items-center gap-2">
+                <Label className="whitespace-nowrap text-xs">預かり金</Label>
+                <div className="flex flex-1 items-center gap-1">
+                  <span className="text-sm">¥</span>
+                  <Input
+                    type="number"
+                    value={cashReceived}
+                    onChange={(e) => setCashReceived(e.target.value)}
+                    placeholder="0"
+                    className="h-8"
+                  />
+                </div>
+                {cashReceivedNum > 0 && (
+                  <div
+                    className={cn(
+                      "whitespace-nowrap text-sm font-bold",
+                      change >= 0 ? "text-success" : "text-destructive",
+                    )}
+                  >
+                    釣: ¥{change.toLocaleString()}
+                  </div>
                 )}
-              >
-                釣: ¥{change.toLocaleString()}
               </div>
-            )}
-          </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              size="lg"
-              className="h-14 bg-success text-primary-foreground hover:bg-success/90"
-              disabled={!session || totalAmount === 0}
-              onClick={handleCheckoutCash}
-            >
-              <Banknote className="mr-2 h-5 w-5" />
-              <div className="flex flex-col items-start">
-                <span className="font-bold">現金</span>
-                <span className="text-xs opacity-80">キャッシュ</span>
+              <div className="grid grid-cols-2 gap-3">
+                <Button
+                  size="lg"
+                  className="h-14 bg-success text-primary-foreground hover:bg-success/90"
+                  disabled={!session || totalAmount === 0}
+                  onClick={handleCheckoutCash}
+                >
+                  <Banknote className="mr-2 h-5 w-5" />
+                  <div className="flex flex-col items-start">
+                    <span className="font-bold">現金</span>
+                    <span className="text-xs opacity-80">キャッシュ</span>
+                  </div>
+                </Button>
+                <Button
+                  size="lg"
+                  className="h-14 bg-info text-foreground hover:bg-info/90"
+                  disabled={!session || totalAmount === 0}
+                  onClick={handleCheckoutCashless}
+                >
+                  <CreditCard className="mr-2 h-5 w-5" />
+                  <div className="flex flex-col items-start">
+                    <span className="font-bold">クレペイ</span>
+                    <span className="text-xs opacity-80">カード・QR</span>
+                  </div>
+                </Button>
               </div>
-            </Button>
-            <Button
-              size="lg"
-              className="h-14 bg-info text-foreground hover:bg-info/90"
-              disabled={!session || totalAmount === 0}
-              onClick={handleCheckoutCashless}
-            >
-              <CreditCard className="mr-2 h-5 w-5" />
-              <div className="flex flex-col items-start">
-                <span className="font-bold">クレペイ</span>
-                <span className="text-xs opacity-80">カード・QR</span>
+
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-12 w-full"
+                disabled={!session || totalAmount === 0}
+                onClick={() => setCombinedMode(true)}
+              >
+                <Banknote className="mr-1.5 h-4 w-4" />
+                <CreditCard className="mr-2 h-4 w-4" />
+                <div className="flex flex-col items-start">
+                  <span className="font-bold text-sm">複合会計（現金＋クレペイ）</span>
+                </div>
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-semibold">複合会計</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => { setCombinedMode(false); setCombinedCash(""); setCombinedCashless("") }}
+                  >
+                    キャンセル
+                  </Button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Banknote className="h-4 w-4 text-success shrink-0" />
+                  <Label className="whitespace-nowrap text-xs w-14">現金</Label>
+                  <div className="flex flex-1 items-center gap-1">
+                    <span className="text-sm">¥</span>
+                    <Input
+                      type="number"
+                      value={combinedCash}
+                      onChange={(e) => setCombinedCash(e.target.value)}
+                      placeholder="0"
+                      className="h-8"
+                    />
+                  </div>
+                  {combinedCashNum > 0 && (
+                    <div className={cn("whitespace-nowrap text-xs font-bold", combinedChange >= 0 ? "text-success" : "text-destructive")}>
+                      釣: ¥{combinedChange.toLocaleString()}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <CreditCard className="h-4 w-4 text-info shrink-0" />
+                  <Label className="whitespace-nowrap text-xs w-14">クレペイ</Label>
+                  <div className="flex flex-1 items-center gap-1">
+                    <span className="text-sm">¥</span>
+                    <Input
+                      type="number"
+                      value={combinedCashless}
+                      onChange={(e) => setCombinedCashless(e.target.value)}
+                      placeholder="0"
+                      className="h-8"
+                    />
+                  </div>
+                </div>
+
+                <div className={cn(
+                  "flex justify-between text-xs font-medium pt-1 border-t border-border",
+                  combinedTotal === totalAmount ? "text-success" : combinedTotal > 0 ? "text-destructive" : "text-muted-foreground"
+                )}>
+                  <span>合計入力</span>
+                  <span>¥{combinedTotal.toLocaleString()} / ¥{totalAmount.toLocaleString()}</span>
+                </div>
               </div>
-            </Button>
-          </div>
+
+              <Button
+                size="lg"
+                className="h-14 w-full bg-primary text-primary-foreground hover:bg-primary/90"
+                disabled={!session || !combinedValid}
+                onClick={handleCheckoutCombined}
+              >
+                <Banknote className="mr-1.5 h-5 w-5" />
+                <CreditCard className="mr-2 h-5 w-5" />
+                <div className="flex flex-col items-start">
+                  <span className="font-bold">会計確定（複合）</span>
+                  <span className="text-xs opacity-80">現金 ¥{combinedCashNum.toLocaleString()} ＋ クレペイ ¥{combinedCashlessNum.toLocaleString()}</span>
+                </div>
+              </Button>
+            </>
+          )}
 
           {selectedBlock.status === "checked_out" && (
             <Button
