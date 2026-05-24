@@ -86,7 +86,7 @@ function rebuildAggregateRows(yearMonth) {
 
   if (allDates.length === 0) return
 
-  var ss = getOrCreateSpreadsheet(year)
+  var ss = getOrCreateSpreadsheet(yearMonth)
   var sheet = getOrCreateSheet(ss, monthNum + '月')
 
   allDates.sort().forEach(function(date) {
@@ -151,9 +151,11 @@ function findInsertPosition(sheet, businessDate) {
   return -1
 }
 
-// ── スプレッドシート取得 or 作成（年次） ─────────────────────────────
-function getOrCreateSpreadsheet(year) {
-  var title = year + '年 会計データ'
+// ── スプレッドシート取得 or 作成（年月単位） ─────────────────────────
+function getOrCreateSpreadsheet(yearMonth) {
+  var year  = yearMonth.slice(0, 4)
+  var month = parseInt(yearMonth.slice(5, 7), 10)
+  var title = year + '年' + month + '月'
   var folder = DriveApp.getFolderById(DRIVE_FOLDER_ID)
   var files = folder.getFilesByName(title)
   if (files.hasNext()) return SpreadsheetApp.open(files.next())
@@ -162,7 +164,7 @@ function getOrCreateSpreadsheet(year) {
   return ss
 }
 
-// ── シート取得 or 作成（月次タブ・ヘッダー付き） ─────────────────────
+// ── シート取得 or 作成（ヘッダー付き） ───────────────────────────────
 function getOrCreateSheet(ss, title) {
   var sheet = ss.getSheetByName(title)
   if (!sheet) {
