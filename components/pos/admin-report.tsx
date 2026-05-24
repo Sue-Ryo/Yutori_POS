@@ -843,12 +843,12 @@ export function AdminReport({
   return (
     <div className="flex h-full flex-col">
       {/* タブ */}
-      <div className="flex gap-1 rounded-lg bg-muted p-1 mb-4 shrink-0">
+      <div className="flex gap-0.5 rounded-lg bg-muted p-1 mb-3 shrink-0 sm:gap-1 sm:mb-4">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             className={cn(
-              "flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              "flex flex-1 items-center justify-center gap-1 rounded-md px-1.5 py-2 text-xs font-medium transition-colors sm:gap-1.5 sm:px-3 sm:text-sm",
               activeTab === tab.id
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
@@ -856,13 +856,13 @@ export function AdminReport({
             onClick={() => setActiveTab(tab.id)}
           >
             {tab.icon}
-            <span className="hidden sm:inline">{tab.label}</span>
+            <span className="hidden min-[400px]:inline">{tab.label}</span>
           </button>
         ))}
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl space-y-6">
+        <div className="mx-auto max-w-4xl space-y-4 sm:space-y-6">
 
           {/* ── 日計タブ ── */}
           {activeTab === "daily" && (
@@ -936,7 +936,7 @@ export function AdminReport({
                   <CardDescription>{periodLabel}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
                     <StatCard
                       icon={<DollarSign className="h-4 w-4" />}
                       label="売上合計"

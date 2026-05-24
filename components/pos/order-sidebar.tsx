@@ -396,7 +396,7 @@ export function OrderSidebar({
         )}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-border p-4">
+        <div className="flex items-center justify-between border-b border-border p-3 sm:p-4">
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-bold shrink-0">{selectedBlock.name}</h2>
@@ -475,7 +475,7 @@ export function OrderSidebar({
         )}
 
         {/* 注文内容エリア */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4">
           {/* オーダー追加ボタン */}
           <div className="mb-4">
             <div className="mb-2 flex items-center justify-between">
@@ -619,7 +619,7 @@ export function OrderSidebar({
         </div>
 
         {/* 会計エリア */}
-        <div className="space-y-3 border-t border-border p-4">
+        <div className="space-y-3 border-t border-border p-3 sm:p-4">
           {/* ハッピーアワートグル */}
           <Button
             variant={happyHour ? "default" : "outline"}

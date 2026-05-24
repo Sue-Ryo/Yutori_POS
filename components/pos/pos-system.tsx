@@ -725,22 +725,22 @@ export function POSSystem({ storeId }: { storeId: number }) {
   return (
     <div className="flex h-screen flex-col bg-background">
       {/* Header */}
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-4 py-3">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <UtensilsCrossed className="h-5 w-5" />
+      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-3 py-2 sm:px-4 sm:py-3">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground sm:h-10 sm:w-10">
+            <UtensilsCrossed className="h-4 w-4 sm:h-5 sm:w-5" />
           </div>
-          <div>
-            <h1 className="text-lg font-bold">{settings.storeName}</h1>
-            <p className="text-xs text-muted-foreground">卓番管理・会計システム</p>
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-bold sm:text-lg">{settings.storeName}</h1>
+            <p className="hidden text-xs text-muted-foreground sm:block">卓番管理・会計システム</p>
           </div>
         </div>
 
-        <nav className="flex gap-1 rounded-lg bg-muted p-1">
+        <nav className="flex gap-0.5 rounded-lg bg-muted p-1 sm:gap-1">
           <Button
             variant="ghost"
             size="sm"
-            className={cn("gap-2 rounded-md px-4", activeTab === "map" && "bg-background shadow-sm")}
+            className={cn("gap-1.5 rounded-md px-2 sm:px-4", activeTab === "map" && "bg-background shadow-sm")}
             onClick={() => setActiveTab("map")}
           >
             <LayoutGrid className="h-4 w-4" />
@@ -749,7 +749,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
           <Button
             variant="ghost"
             size="sm"
-            className={cn("gap-2 rounded-md px-4", activeTab === "editor" && "bg-background shadow-sm")}
+            className={cn("gap-1.5 rounded-md px-2 sm:px-4", activeTab === "editor" && "bg-background shadow-sm")}
             onClick={() => setActiveTab("editor")}
           >
             <Edit3 className="h-4 w-4" />
@@ -758,7 +758,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
           <Button
             variant="ghost"
             size="sm"
-            className={cn("gap-2 rounded-md px-4", activeTab === "report" && "bg-background shadow-sm")}
+            className={cn("gap-1.5 rounded-md px-2 sm:px-4", activeTab === "report" && "bg-background shadow-sm")}
             onClick={() => setActiveTab("report")}
           >
             <BarChart3 className="h-4 w-4" />
@@ -766,11 +766,11 @@ export function POSSystem({ storeId }: { storeId: number }) {
           </Button>
         </nav>
 
-        <div className="flex w-32 justify-end">
+        <div className="flex shrink-0 justify-end">
           <Button
             variant="ghost"
             size="sm"
-            className="gap-2"
+            className="gap-1.5 px-2 sm:px-3"
             onClick={loadAllFromDB}
             disabled={dbLoading}
             title="全データを再読み込み"
@@ -783,57 +783,57 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
       {/* 席状況早見表 (マップタブのみ表示) */}
       {activeTab === "map" && (
-        <div className="sticky top-16 z-9 border-b border-border bg-card px-4 py-2.5">
+        <div className="sticky top-12 z-9 border-b border-border bg-card px-3 py-2 sm:top-16 sm:px-4 sm:py-2.5">
           {linkMode ? (
-            <div className="flex items-center gap-2">
-              <Link2 className="h-4 w-4 text-info" />
+            <div className="flex flex-wrap items-center gap-2">
+              <Link2 className="h-4 w-4 shrink-0 text-info" />
               <span className="text-sm font-medium text-info">連結する席を選択</span>
               <span className="text-xs text-muted-foreground">{linkSelection.length}席選択中</span>
-              <Button size="sm" className="ml-1 bg-success text-primary-foreground hover:bg-success/90" disabled={linkSelection.length < 2} onClick={handleConfirmLink}>連結する</Button>
+              <Button size="sm" className="ml-auto bg-success text-primary-foreground hover:bg-success/90 sm:ml-1" disabled={linkSelection.length < 2} onClick={handleConfirmLink}>連結する</Button>
               <Button size="sm" variant="ghost" onClick={handleCancelLinkMode}>キャンセル</Button>
             </div>
           ) : moveMode ? (
-            <div className="flex items-center gap-2">
-              <ArrowRightLeft className="h-4 w-4 text-amber-500" />
+            <div className="flex flex-wrap items-center gap-2">
+              <ArrowRightLeft className="h-4 w-4 shrink-0 text-amber-500" />
               <span className="text-sm font-medium text-amber-600">
                 {moveSource === null ? "移動元の席をタップ" : "移動先の空席をタップ"}
               </span>
               {moveSource && moveDest && (
-                <Button size="sm" className="ml-1 bg-success text-primary-foreground hover:bg-success/90" onClick={handleConfirmMove}>移動する</Button>
+                <Button size="sm" className="ml-auto bg-success text-primary-foreground hover:bg-success/90 sm:ml-1" onClick={handleConfirmMove}>移動する</Button>
               )}
               <Button size="sm" variant="ghost" onClick={handleCancelMoveMode}>キャンセル</Button>
             </div>
           ) : (
-            <div className="flex items-center justify-between">
-              <div className="flex flex-wrap items-center gap-3 text-xs">
-                <div className="flex items-center gap-1.5">
-                  <div className="h-3 w-3 rounded bg-table-empty" />
+            <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <div className="flex items-center gap-1">
+                  <div className="h-2.5 w-2.5 rounded bg-table-empty" />
                   <span className="text-muted-foreground">空席</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-3 w-3 rounded bg-table-reserved" />
+                <div className="flex items-center gap-1">
+                  <div className="h-2.5 w-2.5 rounded bg-table-reserved" />
                   <span className="text-muted-foreground">予約</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-3 w-3 rounded bg-table-occupied" />
+                <div className="flex items-center gap-1">
+                  <div className="h-2.5 w-2.5 rounded bg-table-occupied" />
                   <span className="text-muted-foreground">使用中</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="h-3 w-3 rounded bg-table-checked-out" />
+                <div className="flex items-center gap-1">
+                  <div className="h-2.5 w-2.5 rounded bg-table-checked-out" />
                   <span className="text-muted-foreground">会計済</span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <Link2 className="h-3 w-3 text-info" />
+                <div className="flex items-center gap-1">
+                  <Link2 className="h-2.5 w-2.5 text-info" />
                   <span className="text-muted-foreground">連結中</span>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={handleEnterLinkMode}>
-                  <Link2 className="h-3.5 w-3.5" />
+              <div className="flex items-center gap-1.5">
+                <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs sm:h-8 sm:gap-1.5 sm:px-3" onClick={handleEnterLinkMode}>
+                  <Link2 className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                   席を連結
                 </Button>
-                <Button size="sm" variant="outline" className="gap-1.5" onClick={handleEnterMoveMode}>
-                  <ArrowRightLeft className="h-3.5 w-3.5" />
+                <Button size="sm" variant="outline" className="h-7 gap-1 px-2 text-xs sm:h-8 sm:gap-1.5 sm:px-3" onClick={handleEnterMoveMode}>
+                  <ArrowRightLeft className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
                   席移動
                 </Button>
               </div>
@@ -843,7 +843,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
       )}
 
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden p-4">
+      <main className="flex-1 overflow-hidden p-2 sm:p-4">
         {activeTab === "map" && (
           <FloorMap
             blocks={blocks}
