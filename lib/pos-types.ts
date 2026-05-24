@@ -119,3 +119,11 @@ export interface BusinessSettings {
   taxRate: number
   checkedOutDisplaySeconds: number
 }
+
+export interface DailyExpense {
+  businessDate: string
+  receiptCount: number
+  amount: number
+  updatedAt: Date
+  handoverNote: string
+}

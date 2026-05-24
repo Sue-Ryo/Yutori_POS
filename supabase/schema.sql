@@ -118,6 +118,17 @@ CREATE POLICY "anon_all" ON layout_elements FOR ALL TO anon USING (true) WITH CH
 CREATE POLICY "anon_all" ON pos_settings FOR ALL TO anon USING (true) WITH CHECK (true);
 CREATE POLICY "anon_all" ON coupons FOR ALL TO anon USING (true) WITH CHECK (true);
 
+-- daily_expenses テーブル
+CREATE TABLE IF NOT EXISTS daily_expenses (
+  business_date TEXT PRIMARY KEY,
+  receipt_count INTEGER NOT NULL DEFAULT 0,
+  amount        INTEGER NOT NULL DEFAULT 0,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE daily_expenses ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "anon_all" ON daily_expenses FOR ALL TO anon USING (true) WITH CHECK (true);
+
 -- ============================================================
 -- Realtime 有効化
 -- ============================================================
@@ -126,3 +137,4 @@ ALTER PUBLICATION supabase_realtime ADD TABLE blocks;
 ALTER PUBLICATION supabase_realtime ADD TABLE sessions;
 ALTER PUBLICATION supabase_realtime ADD TABLE payments;
 ALTER PUBLICATION supabase_realtime ADD TABLE layout_elements;
+ALTER PUBLICATION supabase_realtime ADD TABLE daily_expenses;

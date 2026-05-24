@@ -1,6 +1,6 @@
 ﻿"use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import type {
   Payment,
@@ -8,6 +8,7 @@ import type {
   Product,
   Coupon,
   DiscountType,
+  DailyExpense,
 } from "@/lib/pos-types"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -53,11 +54,13 @@ interface AdminReportProps {
   settings: BusinessSettings
   products: Product[]
   coupons: Coupon[]
+  expenses: DailyExpense[]
   onCancelPayment: (paymentId: string) => void
   onUpdateSettings: (settings: BusinessSettings) => void
   onUpdateProducts: (products: Product[]) => void
   onUpdateCoupons: (coupons: Coupon[]) => void
   onMarkPaymentsSynced: (ids: string[], syncedAt: Date) => void
+  onUpsertExpense: (expense: DailyExpense) => Promise<void>
 }
 
 // ── 商品マスタタブ ─────────────────────────────────────────────────────
@@ -648,22 +651,113 @@ function EditCouponRow({
   )
 }
 
+// ── 経費入力カード ────────────────────────────────────────────────────
+function ExpenseCard({
+  todayBD,
+  expenses,
+  onUpsertExpense,
+}: {
+  todayBD: string
+  expenses: DailyExpense[]
+  onUpsertExpense: (expense: DailyExpense) => Promise<void>
+}) {
+  const [selectedDate, setSelectedDate] = useState(todayBD)
+  const [receiptCount, setReceiptCount] = useState(0)
+  const [amount, setAmount] = useState(0)
+  const [handoverNote, setHandoverNote] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<Date | undefined>()
+
+  useEffect(() => {
+    const exp = expenses.find((e) => e.businessDate === selectedDate)
+    setReceiptCount(exp?.receiptCount ?? 0)
+    setAmount(exp?.amount ?? 0)
+    setHandoverNote(exp?.handoverNote ?? "")
+    setSavedAt(exp?.updatedAt)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDate])
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const now = new Date()
+      await onUpsertExpense({ businessDate: selectedDate, receiptCount, amount, handoverNote, updatedAt: now })
+      setSavedAt(now)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="rounded-lg bg-muted p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2 text-destructive">
+          <Calculator className="h-4 w-4" />
+          <span className="text-sm">経費</span>
+        </div>
+        <input
+          type="date"
+          value={selectedDate}
+          max={todayBD}
+          onChange={(e) => setSelectedDate(e.target.value)}
+          className="h-7 rounded-md border border-border bg-background px-2 text-xs"
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          type="number"
+          value={receiptCount}
+          min={0}
+          onChange={(e) => setReceiptCount(Math.max(0, Number(e.target.value)))}
+          className="h-8 w-14 bg-background text-center"
+          placeholder="0"
+        />
+        <span className="shrink-0 text-xs text-muted-foreground">枚</span>
+        <span className="shrink-0 text-muted-foreground">¥</span>
+        <Input
+          type="number"
+          value={amount}
+          min={0}
+          onChange={(e) => setAmount(Math.max(0, Number(e.target.value)))}
+          className="h-8 flex-1 bg-background"
+        />
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Input
+          className="h-8 flex-1 bg-background text-sm"
+          placeholder="引継ぎメモ（次のシフトへの申し送り）"
+          value={handoverNote}
+          onChange={(e) => setHandoverNote(e.target.value)}
+        />
+        <Button size="sm" className="h-8 shrink-0 px-3" onClick={handleSave} disabled={saving}>
+          {saving ? <RefreshCw className="h-3 w-3 animate-spin" /> : "保存"}
+        </Button>
+      </div>
+      {savedAt && (
+        <p className="mt-1.5 text-right text-xs text-muted-foreground">
+          最終更新: {savedAt.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" })}
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ── メインコンポーネント ──────────────────────────────────────────────
 export function AdminReport({
   payments,
   settings,
   products,
   coupons,
+  expenses,
   onCancelPayment,
   onUpdateSettings,
   onUpdateProducts,
   onUpdateCoupons,
   onMarkPaymentsSynced,
+  onUpsertExpense,
 }: AdminReportProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("daily")
   const [period, setPeriod] = useState<Period>("day")
-  const [expenses, setExpenses] = useState(0)
-  const [handoverNote, setHandoverNote] = useState("")
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<{ count: number; error?: string } | null>(null)
 
@@ -715,7 +809,14 @@ export function AdminReport({
   const totalGuests = activePayments.reduce((sum, p) => sum + p.guestCount, 0)
   const groupCount = activePayments.length
   const avgPerGuest = totalGuests > 0 ? Math.round(totalSales / totalGuests) : 0
-  const profit = totalSales - expenses
+  const periodExpenses = expenses
+    .filter((e) =>
+      period === "day"
+        ? e.businessDate === todayBD
+        : e.businessDate >= periodStart && e.businessDate <= todayBD
+    )
+    .reduce((sum, e) => sum + e.amount, 0)
+  const profit = totalSales - periodExpenses
 
   const formatDatetime = (d: Date) =>
     new Date(d).toLocaleString("ja-JP", {
@@ -858,21 +959,11 @@ export function AdminReport({
                       value={`¥${avgPerGuest.toLocaleString()}`}
                     />
                     {/* 経費 */}
-                    <div className="rounded-lg bg-muted p-4">
-                      <div className="flex items-center gap-2 text-destructive">
-                        <Calculator className="h-4 w-4" />
-                        <span className="text-sm">経費</span>
-                      </div>
-                      <div className="mt-2 flex items-center gap-2">
-                        <span>¥</span>
-                        <Input
-                          type="number"
-                          value={expenses}
-                          onChange={(e) => setExpenses(Math.max(0, Number(e.target.value)))}
-                          className="h-8 bg-background"
-                        />
-                      </div>
-                    </div>
+                    <ExpenseCard
+                      todayBD={todayBD}
+                      expenses={expenses}
+                      onUpsertExpense={onUpsertExpense}
+                    />
                     <div className="col-span-full rounded-lg bg-primary/10 p-4">
                       <div className="flex items-center gap-2 text-primary">
                         <TrendingUp className="h-4 w-4" />
@@ -881,15 +972,6 @@ export function AdminReport({
                       <p className="mt-2 text-2xl font-bold text-primary">
                         ¥{profit.toLocaleString()}
                       </p>
-                    </div>
-                    <div className="col-span-full">
-                      <Label className="text-xs text-muted-foreground">引継ぎメモ</Label>
-                      <Input
-                        className="mt-1"
-                        placeholder="次のシフトへの申し送り事項"
-                        value={handoverNote}
-                        onChange={(e) => setHandoverNote(e.target.value)}
-                      />
                     </div>
                   </div>
                 </CardContent>

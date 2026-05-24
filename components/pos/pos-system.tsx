@@ -11,6 +11,7 @@ import type {
   CheckoutData,
   Product,
   Coupon,
+  DailyExpense,
 } from "@/lib/pos-types"
 import {
   initialBlocks,
@@ -38,6 +39,7 @@ import { fetchPayments, upsertPayments } from "@/lib/api/payments-db"
 import { fetchSettings, upsertSettings } from "@/lib/api/settings-db"
 import { fetchCoupons, syncCoupons } from "@/lib/api/coupons-db"
 import { fetchLayoutElements, upsertLayoutElements } from "@/lib/api/layout-db"
+import { fetchExpenses, upsertExpense } from "@/lib/api/expenses-db"
 import { FloorMap } from "./floor-map"
 import { OrderSidebar } from "./order-sidebar"
 import { LayoutEditor } from "./layout-editor"
@@ -61,6 +63,7 @@ export function POSSystem() {
   const [settings, setSettings] = useState<BusinessSettings>(initialSettings)
   const [products, setProducts] = useState<Product[]>(initialProducts)
   const [coupons, setCoupons] = useState<Coupon[]>(initialCoupons)
+  const [expenses, setExpenses] = useState<DailyExpense[]>([])
   const [dbLoading, setDbLoading] = useState(false)
   const [dbError, setDbError] = useState<string | null>(null)
   const dbSyncingRef = useRef(false)
@@ -74,7 +77,7 @@ export function POSSystem() {
     try {
       const [
         dbBlocks, dbSessions, dbPayments,
-        dbSettings, dbCoupons, dbElements, dbProducts,
+        dbSettings, dbCoupons, dbElements, dbProducts, dbExpenses,
       ] = await Promise.all([
         fetchBlocks().catch((e) => { console.error("[DB]blocks fetch:", e); return null }),
         fetchSessions().catch((e) => { console.error("[DB]sessions fetch:", e); return null }),
@@ -83,6 +86,7 @@ export function POSSystem() {
         fetchCoupons().catch((e) => { console.error("[DB]coupons fetch:", e); return null }),
         fetchLayoutElements().catch((e) => { console.error("[DB]layout fetch:", e); return null }),
         fetchProducts().catch((e) => { console.error("[DB]products fetch:", e); return null }),
+        fetchExpenses().catch((e) => { console.error("[DB]expenses fetch:", e); return null }),
       ])
       if (dbBlocks !== null) setBlocks(dbBlocks)
       if (dbSessions !== null) setSessions(dbSessions)
@@ -99,6 +103,7 @@ export function POSSystem() {
       if (dbCoupons !== null) setCoupons(dbCoupons)
       if (dbElements !== null) setLayoutElements(dbElements)
       if (dbProducts !== null) setProducts(dbProducts)
+      if (dbExpenses !== null) setExpenses(dbExpenses)
       console.log("[POSSystem] DB読み込み完了")
     } catch (err) {
       console.error("DB読み込みエラー:", err)
@@ -185,6 +190,13 @@ export function POSSystem() {
           setProducts(data)
           setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]products:", e))
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "daily_expenses" }, () => {
+        fetchExpenses().then((data) => {
+          dbSyncingRef.current = true
+          setExpenses(data)
+          setTimeout(() => { dbSyncingRef.current = false }, 300)
+        }).catch((e) => console.error("[RT]daily_expenses:", e))
       })
       .subscribe()
 
@@ -482,6 +494,16 @@ export function POSSystem() {
     setPayments((prev) =>
       prev.map((p) => ids.includes(p.id) ? { ...p, syncedToSheetAt: syncedAt } : p)
     )
+  }, [])
+
+  const handleUpsertExpense = useCallback(async (expense: DailyExpense) => {
+    await upsertExpense(expense)
+    setExpenses((prev) => {
+      const idx = prev.findIndex((e) => e.businessDate === expense.businessDate)
+      return idx >= 0
+        ? prev.map((e) => e.businessDate === expense.businessDate ? expense : e)
+        : [...prev, expense]
+    })
   }, [])
 
   const handleReserveBlock = useCallback((blockId: string) => {
@@ -860,11 +882,13 @@ export function POSSystem() {
             settings={settings}
             products={products}
             coupons={coupons}
+            expenses={expenses}
             onCancelPayment={handleCancelPayment}
             onUpdateSettings={setSettings}
             onUpdateProducts={handleUpdateProducts}
             onUpdateCoupons={setCoupons}
             onMarkPaymentsSynced={handleMarkPaymentsSynced}
+            onUpsertExpense={handleUpsertExpense}
           />
         )}
         {dbError && (
