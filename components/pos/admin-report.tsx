@@ -41,6 +41,8 @@ import {
 } from "lucide-react"
 import { getBusinessDate } from "@/lib/pos-store"
 import { clearSession } from "@/lib/session"
+import { hashPin, verifyPin } from "@/lib/pin"
+import { fetchStores, updatePinHash } from "@/lib/api/stores-db"
 
 type AdminTab = "daily" | "products" | "coupons" | "settings"
 type Period = "day" | "week" | "month"
@@ -52,6 +54,7 @@ const PERIOD_OPTIONS: { id: Period; label: string }[] = [
 ]
 
 interface AdminReportProps {
+  storeId: number
   payments: Payment[]
   settings: BusinessSettings
   products: Product[]
@@ -746,6 +749,7 @@ function ExpenseCard({
 
 // ── メインコンポーネント ──────────────────────────────────────────────
 export function AdminReport({
+  storeId,
   payments,
   settings,
   products,
@@ -1157,6 +1161,8 @@ export function AdminReport({
               </CardContent>
             </Card>
 
+            <PinChangeCard storeId={storeId} />
+
             <Card className="border-destructive/40">
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between">
@@ -1180,6 +1186,107 @@ export function AdminReport({
         </div>
       </div>
     </div>
+  )
+}
+
+// ── PINコード変更カード ───────────────────────────────────────────────
+function PinChangeCard({ storeId }: { storeId: number }) {
+  const [currentPin, setCurrentPin] = useState("")
+  const [newPin, setNewPin] = useState("")
+  const [confirmPin, setConfirmPin] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+
+  const handleSave = async () => {
+    setMessage(null)
+    if (newPin.length < 4) {
+      setMessage({ type: "error", text: "新しいPINは4桁以上で入力してください" })
+      return
+    }
+    if (newPin !== confirmPin) {
+      setMessage({ type: "error", text: "新しいPINが一致しません" })
+      return
+    }
+    setSaving(true)
+    try {
+      const stores = await fetchStores()
+      const store = stores.find((s) => s.id === storeId)
+      if (!store) throw new Error("店舗情報の取得に失敗しました")
+      const ok = await verifyPin(currentPin, store.pinHash)
+      if (!ok) {
+        setMessage({ type: "error", text: "現在のPINが違います" })
+        setCurrentPin("")
+        return
+      }
+      const hash = await hashPin(newPin)
+      await updatePinHash(storeId, hash)
+      setMessage({ type: "success", text: "PINを変更しました" })
+      setCurrentPin("")
+      setNewPin("")
+      setConfirmPin("")
+    } catch (e) {
+      setMessage({ type: "error", text: String(e) })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">PINコード変更</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-3 max-w-xs">
+          <div className="space-y-1">
+            <Label className="text-xs">現在のPIN</Label>
+            <Input
+              type="password"
+              inputMode="numeric"
+              maxLength={6}
+              value={currentPin}
+              onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ""))}
+              placeholder="現在のPINを入力"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">新しいPIN（4〜6桁）</Label>
+            <Input
+              type="password"
+              inputMode="numeric"
+              maxLength={6}
+              value={newPin}
+              onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))}
+              placeholder="新しいPINを入力"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">新しいPIN（確認）</Label>
+            <Input
+              type="password"
+              inputMode="numeric"
+              maxLength={6}
+              value={confirmPin}
+              onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))}
+              placeholder="もう一度入力"
+            />
+          </div>
+          {message && (
+            <p className={`text-xs ${message.type === "error" ? "text-destructive" : "text-green-600"}`}>
+              {message.text}
+            </p>
+          )}
+          <Button
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || !currentPin || !newPin || !confirmPin}
+          >
+            {saving ? <RefreshCw className="mr-2 h-3 w-3 animate-spin" /> : null}
+            変更を保存
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

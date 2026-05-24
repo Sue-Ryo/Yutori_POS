@@ -875,6 +875,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
         {activeTab === "report" && (
           <AdminReport
+            storeId={storeId}
             payments={payments}
             settings={settings}
             products={products}
