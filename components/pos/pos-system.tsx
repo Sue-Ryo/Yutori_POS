@@ -629,9 +629,14 @@ export function POSSystem({ storeId }: { storeId: number }) {
     const target = sessions.find((s) => s.id === sessionId)
     if (!target) return
 
-    // 解除する席のオーダーを分離
+    // originBlockId で分離できるアイテム（連結時に正しくマージされたもの）
     const splitItems = target.orderItems.filter((i) => i.originBlockId === blockIdToUnlink)
     const remainingItems = target.orderItems.filter((i) => i.originBlockId !== blockIdToUnlink)
+
+    // 連結時に合算されなかった場合に残っている可能性のある既存セッション
+    const existingSecondarySession = sessions.find(
+      (s) => s.blockId === blockIdToUnlink && !s.endedAt && s.id !== sessionId
+    )
 
     const linkedBlockIds = (target.linkedBlockIds ?? []).filter((id) => id !== blockIdToUnlink)
     const newLinkedBlockIds = linkedBlockIds.length > 0 ? linkedBlockIds : undefined
@@ -661,11 +666,17 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
     upsertSessions(sessionsToUpsert, storeId).catch((e) => console.error("[DB]sessions unlink:", e))
 
-    const hasSplitItems = splitItems.length > 0
+    // ステータス決定: 分離アイテムか既存セッションのいずれかに未払いアイテムがあれば occupied
+    const hasUnpaidItems =
+      splitItems.some((i) => !i.isPaid) ||
+      (existingSecondarySession?.orderItems.some((i) => !i.isPaid) ?? false)
+    const startedAt = hasUnpaidItems
+      ? (existingSecondarySession?.startedAt ?? target.startedAt)
+      : undefined
     setBlocks((prev) =>
       prev.map((b) =>
         b.id === blockIdToUnlink
-          ? { ...b, status: hasSplitItems ? "occupied" : "empty", startedAt: hasSplitItems ? target.startedAt : undefined }
+          ? { ...b, status: hasUnpaidItems ? "occupied" : "empty", startedAt }
           : b
       )
     )
