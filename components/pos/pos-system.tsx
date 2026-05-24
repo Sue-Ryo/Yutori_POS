@@ -550,15 +550,37 @@ export function POSSystem({ storeId }: { storeId: number }) {
       linkSelection[0]
     const secondaryBlockIds = linkSelection.filter((id) => id !== primaryBlockId)
 
+    // セカンダリ席のアクティブセッションを収集し、オーダーを originBlockId 付きで取得
+    const secondarySessions = secondaryBlockIds
+      .map((id) => sessions.find((s) => s.blockId === id && !s.endedAt))
+      .filter((s): s is BlockSession => s !== undefined)
+    const mergedItems = secondarySessions.flatMap((s) =>
+      s.orderItems.map((item) => ({
+        ...item,
+        originBlockId: item.originBlockId ?? s.blockId,
+      }))
+    )
+    const secondarySessionIds = new Set(secondarySessions.map((s) => s.id))
+
     const existingSession = sessions.find((s) => s.blockId === primaryBlockId && !s.endedAt)
     if (existingSession) {
       const linkedBlockIds = [...(existingSession.linkedBlockIds ?? []), ...secondaryBlockIds]
       const guestCount = 1 + linkedBlockIds.length
-      const updatedSession = { ...existingSession, linkedBlockIds, guestCount }
+      const updatedSession = {
+        ...existingSession,
+        linkedBlockIds,
+        guestCount,
+        orderItems: [...existingSession.orderItems, ...mergedItems],
+      }
+      const endedSecondarySessions = secondarySessions.map((s) => ({ ...s, endedAt: now }))
       setSessions((prev) =>
-        prev.map((s) => (s.id === existingSession.id ? updatedSession : s))
+        prev.map((s) => {
+          if (s.id === existingSession.id) return updatedSession
+          if (secondarySessionIds.has(s.id)) return { ...s, endedAt: now }
+          return s
+        })
       )
-      upsertSessions([updatedSession], storeId).catch((e) => console.error("[DB]sessions link:", e))
+      upsertSessions([updatedSession, ...endedSecondarySessions], storeId).catch((e) => console.error("[DB]sessions link:", e))
       // サブブロックのステータスをプライマリに合わせる
       const primaryBlock = blocks.find((b) => b.id === primaryBlockId)
       if (primaryBlock) {
@@ -579,13 +601,17 @@ export function POSSystem({ storeId }: { storeId: number }) {
       const newSession: BlockSession = {
         id: `s-${Date.now()}`,
         blockId: primaryBlockId,
-        orderItems: [],
+        orderItems: mergedItems,
         startedAt: now,
         guestCount: 1 + secondaryBlockIds.length,
         linkedBlockIds: secondaryBlockIds,
       }
-      setSessions((prev) => [...prev, newSession])
-      upsertSessions([newSession], storeId).catch((e) => console.error("[DB]sessions link new:", e))
+      const endedSecondarySessions = secondarySessions.map((s) => ({ ...s, endedAt: now }))
+      setSessions((prev) => [
+        ...prev.map((s) => (secondarySessionIds.has(s.id) ? { ...s, endedAt: now } : s)),
+        newSession,
+      ])
+      upsertSessions([newSession, ...endedSecondarySessions], storeId).catch((e) => console.error("[DB]sessions link new:", e))
       setBlocks((prev) =>
         prev.map((b) =>
           b.id === primaryBlockId || secondaryBlockIds.includes(b.id)
@@ -601,18 +627,45 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
   const handleUnlinkBlock = useCallback((sessionId: string, blockIdToUnlink: string) => {
     const target = sessions.find((s) => s.id === sessionId)
-    if (target) {
-      const linkedBlockIds = (target.linkedBlockIds ?? []).filter((id) => id !== blockIdToUnlink)
-      const newLinkedBlockIds = linkedBlockIds.length > 0 ? linkedBlockIds : undefined
-      const guestCount = newLinkedBlockIds ? 1 + newLinkedBlockIds.length : 1
-      const updatedSession = { ...target, linkedBlockIds: newLinkedBlockIds, guestCount }
+    if (!target) return
+
+    // 解除する席のオーダーを分離
+    const splitItems = target.orderItems.filter((i) => i.originBlockId === blockIdToUnlink)
+    const remainingItems = target.orderItems.filter((i) => i.originBlockId !== blockIdToUnlink)
+
+    const linkedBlockIds = (target.linkedBlockIds ?? []).filter((id) => id !== blockIdToUnlink)
+    const newLinkedBlockIds = linkedBlockIds.length > 0 ? linkedBlockIds : undefined
+    const guestCount = newLinkedBlockIds ? 1 + newLinkedBlockIds.length : 1
+    const updatedSession = { ...target, linkedBlockIds: newLinkedBlockIds, guestCount, orderItems: remainingItems }
+
+    const sessionsToUpsert: BlockSession[] = [updatedSession]
+
+    if (splitItems.length > 0) {
+      // originBlockId を除去して新セッションを作成
+      const restoredItems = splitItems.map(({ originBlockId: _orig, ...item }) => item)
+      const splitSession: BlockSession = {
+        id: `s-${Date.now()}`,
+        blockId: blockIdToUnlink,
+        orderItems: restoredItems,
+        startedAt: target.startedAt,
+        guestCount: 1,
+      }
+      setSessions((prev) => [
+        ...prev.map((s) => (s.id === sessionId ? updatedSession : s)),
+        splitSession,
+      ])
+      sessionsToUpsert.push(splitSession)
+    } else {
       setSessions((prev) => prev.map((s) => (s.id === sessionId ? updatedSession : s)))
-      upsertSessions([updatedSession], storeId).catch((e) => console.error("[DB]sessions unlink:", e))
     }
+
+    upsertSessions(sessionsToUpsert, storeId).catch((e) => console.error("[DB]sessions unlink:", e))
+
+    const hasSplitItems = splitItems.length > 0
     setBlocks((prev) =>
       prev.map((b) =>
         b.id === blockIdToUnlink
-          ? { ...b, status: "empty", startedAt: undefined }
+          ? { ...b, status: hasSplitItems ? "occupied" : "empty", startedAt: hasSplitItems ? target.startedAt : undefined }
           : b
       )
     )

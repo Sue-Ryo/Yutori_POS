@@ -32,6 +32,7 @@ export interface OrderItem {
   orderedAt: Date
   isPaid: boolean
   paidAt?: Date
+  originBlockId?: string
 }
 
 export interface Product {
