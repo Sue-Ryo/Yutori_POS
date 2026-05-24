@@ -528,10 +528,17 @@ export function POSSystem({ storeId }: { storeId: number }) {
   }, [])
 
   const handleToggleLinkSelection = useCallback((blockId: string) => {
-    setLinkSelection((prev) =>
-      prev.includes(blockId) ? prev.filter((id) => id !== blockId) : [...prev, blockId]
-    )
-  }, [])
+    setLinkSelection((prev) => {
+      if (prev.includes(blockId)) return prev.filter((id) => id !== blockId)
+      // 予約済みと使用中/提供待ちの混在を禁止
+      const targetStatus = blocks.find((b) => b.id === blockId)?.status
+      const existingStatuses = prev.map((id) => blocks.find((b) => b.id === id)?.status)
+      const hasReserved = existingStatuses.some((s) => s === "reserved") || targetStatus === "reserved"
+      const hasOccupied = existingStatuses.some((s) => s === "occupied") || targetStatus === "occupied"
+      if (hasReserved && hasOccupied) return prev
+      return [...prev, blockId]
+    })
+  }, [blocks])
 
   const handleConfirmLink = useCallback(() => {
     if (linkSelection.length < 2) return
@@ -564,6 +571,11 @@ export function POSSystem({ storeId }: { storeId: number }) {
         )
       }
     } else {
+      // 連結対象に予約席が含まれる場合は全席を reserved のまま維持
+      const hasReservedInSelection = linkSelection.some(
+        (id) => blocks.find((b) => b.id === id)?.status === "reserved"
+      )
+      const linkedStatus = hasReservedInSelection ? "reserved" : "occupied"
       const newSession: BlockSession = {
         id: `s-${Date.now()}`,
         blockId: primaryBlockId,
@@ -574,27 +586,18 @@ export function POSSystem({ storeId }: { storeId: number }) {
       }
       setSessions((prev) => [...prev, newSession])
       upsertSessions([newSession], storeId).catch((e) => console.error("[DB]sessions link new:", e))
-      // プライマリ・サブ両方を occupied に（startedAt はオーダー3個到達時にセット）
       setBlocks((prev) =>
         prev.map((b) =>
           b.id === primaryBlockId || secondaryBlockIds.includes(b.id)
-            ? { ...b, status: "occupied" }
+            ? { ...b, status: linkedStatus }
             : b
         )
       )
     }
 
-    setBlocks((prev) =>
-      prev.map((b) =>
-        secondaryBlockIds.includes(b.id)
-          ? { ...b, status: "occupied" }
-          : b
-      )
-    )
-
     setLinkMode(false)
     setLinkSelection([])
-  }, [linkSelection, sessions])
+  }, [linkSelection, sessions, blocks])
 
   const handleUnlinkBlock = useCallback((sessionId: string, blockIdToUnlink: string) => {
     const target = sessions.find((s) => s.id === sessionId)
