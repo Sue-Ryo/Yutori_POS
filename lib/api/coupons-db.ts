@@ -13,15 +13,21 @@ function rowToCoupon(row: Record<string, unknown>): Coupon {
   }
 }
 
+function isDbId(id: string): boolean {
+  return /^\d+$/.test(id)
+}
+
 function couponToRow(coupon: Coupon, storeId: number): Record<string, unknown> {
-  return {
-    id: coupon.id,
+  const row: Record<string, unknown> = {
     name: coupon.name,
     discount_type: coupon.discountType,
     discount_value: coupon.discountValue,
     is_active: coupon.isActive,
     store_id: storeId,
   }
+  // ローカル仮IDは省略してDBに自動採番させる
+  if (isDbId(coupon.id)) row.id = Number(coupon.id)
+  return row
 }
 
 export async function fetchCoupons(storeId: number): Promise<Coupon[]> {
@@ -31,18 +37,25 @@ export async function fetchCoupons(storeId: number): Promise<Coupon[]> {
 }
 
 export async function syncCoupons(coupons: Coupon[], storeId: number): Promise<void> {
-  const newIds = coupons.map((c) => c.id)
-
   const { data: existing } = await supabase.from("coupons").select("id").eq("store_id", storeId)
-  const existingIds = ((existing ?? []) as { id: string }[]).map((r) => String(r.id))
-  const toDelete = existingIds.filter((id) => !newIds.includes(id))
+  const existingIds = ((existing ?? []) as { id: unknown }[]).map((r) => String(r.id))
+
+  // DBに存在するIDのうち、ローカルに残っていないもの（実IDが一致するもの）を削除
+  const localDbIds = coupons.filter((c) => isDbId(c.id)).map((c) => c.id)
+  const toDelete = existingIds.filter((id) => !localDbIds.includes(id))
+
+  const toInsert = coupons.filter((c) => !isDbId(c.id))
+  const toUpsert = coupons.filter((c) => isDbId(c.id))
 
   await Promise.all([
     toDelete.length > 0
       ? supabase.from("coupons").delete().in("id", toDelete).then(({ error }) => { if (error) throw error })
       : Promise.resolve(),
-    coupons.length > 0
-      ? supabase.from("coupons").upsert(coupons.map((c) => couponToRow(c, storeId))).then(({ error }) => { if (error) throw error })
+    toUpsert.length > 0
+      ? supabase.from("coupons").upsert(toUpsert.map((c) => couponToRow(c, storeId))).then(({ error }) => { if (error) throw error })
+      : Promise.resolve(),
+    toInsert.length > 0
+      ? supabase.from("coupons").insert(toInsert.map((c) => couponToRow(c, storeId))).then(({ error }) => { if (error) throw error })
       : Promise.resolve(),
   ])
 }
