@@ -234,7 +234,7 @@ export function getBusinessDate(date: Date, startTime: string): string {
   if (currentMinutes < startMinutes) {
     d.setDate(d.getDate() - 1)
   }
-  return d.toISOString().split("T")[0]
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 }
 
 export function formatElapsed(from: Date, now: Date = new Date()): string {

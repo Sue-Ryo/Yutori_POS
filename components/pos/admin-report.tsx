@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import type {
   Payment,
+  ServiceBlock,
   BusinessSettings,
   Product,
   Coupon,
@@ -55,6 +56,7 @@ const PERIOD_OPTIONS: { id: Period; label: string }[] = [
 
 interface AdminReportProps {
   storeId: number
+  blocks: ServiceBlock[]
   payments: Payment[]
   settings: BusinessSettings
   products: Product[]
@@ -66,6 +68,20 @@ interface AdminReportProps {
   onUpdateCoupons: (coupons: Coupon[]) => void
   onMarkPaymentsSynced: (ids: string[], syncedAt: Date) => void
   onUpsertExpense: (expense: DailyExpense) => Promise<void>
+}
+
+function paymentLabel(payment: Payment, blocks: ServiceBlock[]): string {
+  const blockName = blocks.find((b) => b.id === payment.blockId)?.name ?? payment.blockId
+  const d = new Date(payment.paymentDatetime)
+  const timestamp = [
+    String(d.getFullYear()).slice(-2),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0"),
+    String(d.getHours()).padStart(2, "0"),
+    String(d.getMinutes()).padStart(2, "0"),
+  ].join("")
+  const suffix = payment.customerName?.trim() || timestamp
+  return `${blockName} ${suffix}`
 }
 
 // ── 商品マスタタブ ─────────────────────────────────────────────────────
@@ -750,6 +766,7 @@ function ExpenseCard({
 // ── メインコンポーネント ──────────────────────────────────────────────
 export function AdminReport({
   storeId,
+  blocks,
   payments,
   settings,
   products,
@@ -1010,7 +1027,7 @@ export function AdminReport({
                           <div className="flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-sm font-semibold">
-                                #{payment.id.slice(-6)}
+                                {paymentLabel(payment, blocks)}
                               </span>
                               <span
                                 className={cn(

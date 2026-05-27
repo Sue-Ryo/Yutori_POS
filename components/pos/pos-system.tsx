@@ -224,14 +224,6 @@ export function POSSystem({ storeId }: { storeId: number }) {
   }, [layoutElements])
   useEffect(() => {
     if (!initializedRef.current || dbSyncingRef.current) return
-    upsertSessions(sessions, storeId).catch((e) => console.error("[DB]sessions:", e))
-  }, [sessions])
-  useEffect(() => {
-    if (!initializedRef.current || dbSyncingRef.current) return
-    upsertPayments(payments, storeId).catch((e) => console.error("[DB]payments:", e))
-  }, [payments])
-  useEffect(() => {
-    if (!initializedRef.current || dbSyncingRef.current) return
     upsertSettings(storeId, settings).catch((e) => console.error("[DB]settings:", e))
   }, [settings])
   useEffect(() => {
@@ -311,13 +303,27 @@ export function POSSystem({ storeId }: { storeId: number }) {
   }, [])
 
   const bussingById = useCallback((blockId: string) => {
+    const now = new Date()
     const endedSession = sessions.find(
       (s) =>
         (s.blockId === blockId || (s.linkedBlockIds ?? []).includes(blockId)) &&
         s.endedAt,
     )
+    // endedAt なしのゴーストセッションも検出して終了させる（DB 未同期の古いセッション対策）
+    const ghostSession = sessions.find(
+      (s) =>
+        (s.blockId === blockId || (s.linkedBlockIds ?? []).includes(blockId)) &&
+        !s.endedAt,
+    )
+    if (ghostSession) {
+      const endedGhost = { ...ghostSession, endedAt: now }
+      setSessions((prev) => prev.map((s) => (s.id === ghostSession.id ? endedGhost : s)))
+      upsertSessions([endedGhost], storeId).catch((e) => console.error("[DB]sessions bussing ghost:", e))
+    }
     const allBlockIds = endedSession
       ? [endedSession.blockId, ...(endedSession.linkedBlockIds ?? [])]
+      : ghostSession
+      ? [ghostSession.blockId, ...(ghostSession.linkedBlockIds ?? [])]
       : [blockId]
     setBlocks((prev) =>
       prev.map((b) =>
@@ -412,6 +418,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
         sessionStartedAt: session.startedAt,
       }
       setPayments((prev) => [newPayment, ...prev])
+      upsertPayments([newPayment], storeId).catch((e) => console.error("[DB]payments checkout:", e))
 
       // セッションの明細を支払済に更新
       const updatedItems = session.orderItems.map((i) =>
@@ -427,6 +434,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
         endedAt: allPaid ? now : undefined,
       }
       setSessions((prev) => prev.map((s) => (s.id === sessionId ? updatedSession : s)))
+      // useEffect の dbSyncingRef ガードに依存せず直接同期（endedAt 欠落防止）
+      upsertSessions([updatedSession], storeId).catch((e) => console.error("[DB]sessions checkout:", e))
 
       // プライマリ + 連結ブロック全て更新
       const allBlockIds = [session.blockId, ...(session.linkedBlockIds ?? [])]
@@ -459,8 +468,19 @@ export function POSSystem({ storeId }: { storeId: number }) {
       setPayments((prev) =>
         prev.map((p) => (p.id === paymentId ? { ...p, canceledAt: now } : p))
       )
+      upsertPayments([{ ...payment, canceledAt: now }], storeId).catch((e) => console.error("[DB]payments cancel:", e))
 
       // セッションの明細を未払いに戻す
+      const cancelSession = sessions.find((s) => s.id === payment.sessionId)
+      if (cancelSession) {
+        const updatedCancelItems = cancelSession.orderItems.map((i) =>
+          payment.paidItemIds.includes(i.id)
+            ? { ...i, isPaid: false, paidAt: undefined }
+            : i
+        )
+        const restoredSession = { ...cancelSession, orderItems: updatedCancelItems, endedAt: undefined }
+        upsertSessions([restoredSession], storeId).catch((e) => console.error("[DB]sessions cancel:", e))
+      }
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id !== payment.sessionId) return s
@@ -474,7 +494,6 @@ export function POSSystem({ storeId }: { storeId: number }) {
       )
 
       // プライマリ + 連結ブロックを使用中に戻す
-      const cancelSession = sessions.find((s) => s.id === payment.sessionId)
       const allCancelBlockIds = [payment.blockId, ...(cancelSession?.linkedBlockIds ?? [])]
       setBlocks((prev) =>
         prev.map((b) =>
@@ -491,6 +510,12 @@ export function POSSystem({ storeId }: { storeId: number }) {
     setPayments((prev) =>
       prev.map((p) => ids.includes(p.id) ? { ...p, syncedToSheetAt: syncedAt } : p)
     )
+    const syncedPayments = paymentsRef.current
+      .filter((p) => ids.includes(p.id))
+      .map((p) => ({ ...p, syncedToSheetAt: syncedAt }))
+    if (syncedPayments.length > 0) {
+      upsertPayments(syncedPayments, storeId).catch((e) => console.error("[DB]payments synced:", e))
+    }
   }, [])
 
   const handleUpsertExpense = useCallback(async (expense: DailyExpense) => {
@@ -721,9 +746,11 @@ export function POSSystem({ storeId }: { storeId: number }) {
     const sourceBlock = blocks.find((b) => b.id === moveSource)
 
     // セッションの blockId を移動先に変更
+    const movedSession = { ...sourceSession, blockId: moveDest }
     setSessions((prev) =>
-      prev.map((s) => s.id === sourceSession.id ? { ...s, blockId: moveDest } : s)
+      prev.map((s) => s.id === sourceSession.id ? movedSession : s)
     )
+    upsertSessions([movedSession], storeId).catch((e) => console.error("[DB]sessions move:", e))
 
     // ブロックのステータスを付け替え
     setBlocks((prev) =>
@@ -943,6 +970,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
         {activeTab === "report" && (
           <AdminReport
             storeId={storeId}
+            blocks={blocks}
             payments={payments}
             settings={settings}
             products={products}

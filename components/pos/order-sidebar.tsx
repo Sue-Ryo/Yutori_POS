@@ -318,7 +318,7 @@ export function OrderSidebar({
     )
   }
 
-  const resolvedCustomerName = customerName.trim() || selectedBlock.name
+  const resolvedCustomerName = customerName.trim() || undefined
 
   const handleCheckoutCash = () => {
     if (!session) return
