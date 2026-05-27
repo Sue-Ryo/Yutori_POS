@@ -11,7 +11,7 @@ const GAS_SECRET = PROPS.getProperty('GAS_SECRET')
 const DRIVE_FOLDER_ID = PROPS.getProperty('DRIVE_FOLDER_ID')
 
 const DAYS_JA = ['日', '月', '火', '水', '木', '金', '土']
-const HEADERS = ['種別', '日付/顧客名', '人数', '入店時間', '会計時間', '滞在(分)', '金額', '現金', 'キャッシュレス', '支払方法', '割引', '消費税', '経費', '経費枚数', '利益']
+const HEADERS = ['日付', '来客数', '組数', '売上', '現金', 'キャッシュレス', '割引', '経費', '経費枚数', '利益']
 
 // ── タイマートリガーから呼ばれる ──────────────────────────────────────
 function syncFromSupabase() {
@@ -88,7 +88,6 @@ function rebuildAggregateRows(yearMonth) {
   if (lastRow > 1) sheet.deleteRows(2, lastRow - 1)
 
   var allRows = []
-  var starRowNums = []  // ★行のシート行番号（1-indexed）
 
   allDates.forEach(function(date) {
     var dayPayments = byDay[date] || []
@@ -99,35 +98,22 @@ function rebuildAggregateRows(yearMonth) {
     var totalCashless = dayPayments.reduce(function(s, p) { return s + (p.cashless_amount || 0) }, 0)
     var totalGuests   = dayPayments.reduce(function(s, p) { return s + (p.guest_count     || 0) }, 0)
     var totalDiscount = dayPayments.reduce(function(s, p) { return s + (p.discount_amount || 0) }, 0)
-    var totalTax      = dayPayments.reduce(function(s, p) { return s + (p.tax_amount      || 0) }, 0)
     var expenseAmt    = expense ? (expense.amount        || 0) : 0
     var expenseCount  = expense ? (expense.receipt_count || 0) : 0
     var profit = totalSales - expenseAmt
 
-    // 日次集計行
-    starRowNums.push(allRows.length + 2)  // +2: 1行目はヘッダー、allRowsは0-indexed
     allRows.push([
-      '★' + date,
       toDateDisplay(date),
-      totalGuests + '名 / ' + dayPayments.length + '組',
-      '', '',
-      '',
+      totalGuests,
+      dayPayments.length,
       totalSales, totalCash, totalCashless,
-      '',
-      totalDiscount, totalTax,
+      totalDiscount,
       expenseAmt, expenseCount, profit
     ])
   })
 
   if (allRows.length === 0) return
   sheet.getRange(2, 1, allRows.length, HEADERS.length).setValues(allRows)
-
-  // ★行を太字＋薄青背景で強調
-  starRowNums.forEach(function(rowNum) {
-    var r = sheet.getRange(rowNum, 1, 1, HEADERS.length)
-    r.setFontWeight('bold')
-    r.setBackground('#e8f0fe')
-  })
 }
 
 // ── スプレッドシート取得 or 作成（年月単位） ─────────────────────────
