@@ -11,23 +11,20 @@ const GAS_SECRET = PROPS.getProperty('GAS_SECRET')
 const DRIVE_FOLDER_ID = PROPS.getProperty('DRIVE_FOLDER_ID')
 
 const DAYS_JA = ['日', '月', '火', '水', '木', '金', '土']
-const HEADERS = ['日付', '来客数', '売上', 'クレペイ', '現金', '経費', '利益']
+const HEADERS = ['種別', '日付/顧客名', '人数', '入店時間', '会計時間', '滞在(分)', '金額', '現金', 'キャッシュレス', '支払方法', '割引', '消費税', '経費', '経費枚数', '利益']
 
 // ── タイマートリガーから呼ばれる ──────────────────────────────────────
 function syncFromSupabase() {
   var now = new Date()
   var ym = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM')
 
-  // 未同期の payments を取得してマーク
   var unsynced = fetchUnsyncedPayments()
   if (unsynced.length > 0) {
     markSynced(unsynced.map(function(p) { return p.id }))
   }
 
-  // 今月の集計行を再構築
   rebuildAggregateRows(ym)
 
-  // 月初め1〜7日は先月分も更新
   if (now.getDate() <= 7) {
     var prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1)
     var prevYm = Utilities.formatDate(prevDate, 'Asia/Tokyo', 'yyyy-MM')
@@ -41,7 +38,6 @@ function doPost(e) {
     var body = JSON.parse(e.postData.contents)
     if (body.secret !== GAS_SECRET) return respond({ error: 'Unauthorized' })
 
-    // 渡された payments の ID をすべて同期済みとしてマーク
     var payments = body.payments || []
     var syncedIds = payments
       .filter(function(p) { return !p.canceledAt && !p.canceled_at })
@@ -49,7 +45,6 @@ function doPost(e) {
 
     if (syncedIds.length > 0) markSynced(syncedIds)
 
-    // 今月（必要なら先月）の集計行を再構築
     var now = new Date()
     var ym = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM')
     rebuildAggregateRows(ym)
@@ -66,89 +61,113 @@ function doPost(e) {
   }
 }
 
-// ── 集計行の再構築（指定年月） ────────────────────────────────────────
+// ── 月次シートを全再構築（日付ヘッダー行 + 明細行） ──────────────────
 function rebuildAggregateRows(yearMonth) {
-  var year = yearMonth.slice(0, 4)
   var monthNum = parseInt(yearMonth.slice(5, 7), 10)
-
   var allPayments = fetchPaymentsForMonth(yearMonth)
-  var byDay = groupBy(allPayments, function(p) { return p.business_date })
+  var expenseList = fetchExpensesForMonth(yearMonth)
+  var blocks = fetchBlocks()
 
-  var expenses = fetchExpensesForMonth(yearMonth)
+  var blockMap = {}
+  blocks.forEach(function(b) { blockMap[b.id] = b.name })
+
   var expenseMap = {}
-  expenses.forEach(function(e) { expenseMap[e.business_date] = e })
+  expenseList.forEach(function(e) { expenseMap[e.business_date] = e })
 
-  // 支払あり・経費ありの両方の日付を対象にする
+  var activePayments = allPayments.filter(function(p) { return !p.canceled_at })
+  var byDay = groupBy(activePayments, function(p) { return p.business_date })
+
   var allDates = Object.keys(byDay)
   Object.keys(expenseMap).forEach(function(d) {
     if (allDates.indexOf(d) === -1) allDates.push(d)
   })
-
   if (allDates.length === 0) return
+  allDates.sort()
 
   var ss = getOrCreateSpreadsheet(yearMonth)
   var sheet = getOrCreateSheet(ss, monthNum + '月')
 
-  allDates.sort().forEach(function(date) {
+  // データ行をクリアして再構築
+  var lastRow = sheet.getLastRow()
+  if (lastRow > 1) sheet.deleteRows(2, lastRow - 1)
+
+  var allRows = []
+  var starRowNums = []  // ★行のシート行番号（1-indexed）
+
+  allDates.forEach(function(date) {
     var dayPayments = byDay[date] || []
     var expense = expenseMap[date] || null
-    upsertAggregateRow(sheet, date, dayPayments, expense)
+
+    var totalSales    = dayPayments.reduce(function(s, p) { return s + (p.total_amount    || 0) }, 0)
+    var totalCash     = dayPayments.reduce(function(s, p) { return s + (p.cash_amount     || 0) }, 0)
+    var totalCashless = dayPayments.reduce(function(s, p) { return s + (p.cashless_amount || 0) }, 0)
+    var totalGuests   = dayPayments.reduce(function(s, p) { return s + (p.guest_count     || 0) }, 0)
+    var totalDiscount = dayPayments.reduce(function(s, p) { return s + (p.discount_amount || 0) }, 0)
+    var totalTax      = dayPayments.reduce(function(s, p) { return s + (p.tax_amount      || 0) }, 0)
+    var expenseAmt    = expense ? (expense.amount        || 0) : 0
+    var expenseCount  = expense ? (expense.receipt_count || 0) : 0
+    var profit = totalSales - expenseAmt
+
+    // ★ 日付ヘッダー行
+    starRowNums.push(allRows.length + 2)  // +2: 1行目はヘッダー、allRowsは0-indexed
+    allRows.push([
+      '★' + date,
+      toDateDisplay(date),
+      totalGuests + '名 / ' + dayPayments.length + '組',
+      '', '',
+      '',
+      totalSales, totalCash, totalCashless,
+      '',
+      totalDiscount, totalTax,
+      expenseAmt, expenseCount, profit
+    ])
+
+    // 個別会計の明細行
+    dayPayments.forEach(function(p) {
+      var label = (p.customer_name && p.customer_name.trim())
+        ? p.customer_name.trim()
+        : (blockMap[p.block_id] || p.block_id)
+
+      var checkIn  = p.session_started_at ? formatJstTime(p.session_started_at) : ''
+      var checkOut = formatJstTime(p.payment_datetime)
+      var duration = p.session_started_at
+        ? Math.round((new Date(p.payment_datetime) - new Date(p.session_started_at)) / 60000)
+        : ''
+
+      var ca = p.cash_amount || 0
+      var cl = p.cashless_amount || 0
+      var method = ca > 0 && cl === 0 ? '現金'
+                 : cl > 0 && ca === 0 ? 'キャッシュレス'
+                 : ca > 0 && cl > 0   ? '併用'
+                 : ''
+
+      allRows.push([
+        '',
+        label,
+        p.guest_count || 0,
+        checkIn,
+        checkOut,
+        duration,
+        p.total_amount    || 0,
+        ca,
+        cl,
+        method,
+        p.discount_amount || 0,
+        p.tax_amount      || 0,
+        '', '', ''
+      ])
+    })
   })
-}
 
-// ── 集計行の upsert ───────────────────────────────────────────────────
-function upsertAggregateRow(sheet, businessDate, payments, expense) {
-  var dateLabel = toDateDisplay(businessDate)
+  if (allRows.length === 0) return
+  sheet.getRange(2, 1, allRows.length, HEADERS.length).setValues(allRows)
 
-  var totalSales  = payments.reduce(function(s, p) { return s + (p.total_amount    || 0) }, 0)
-  var cashless    = payments.reduce(function(s, p) { return s + (p.cashless_amount || 0) }, 0)
-  var cash        = payments.reduce(function(s, p) { return s + (p.cash_amount     || 0) }, 0)
-  var guests      = payments.reduce(function(s, p) { return s + (p.guest_count     || 0) }, 0)
-  var expenseAmt  = expense ? (expense.amount || 0) : 0
-  var profit      = totalSales - expenseAmt
-
-  var row = [
-    dateLabel,
-    guests + '人',
-    formatYen(totalSales),
-    formatYen(cashless),
-    formatYen(cash),
-    formatYen(expenseAmt),
-    formatYen(profit),
-  ]
-
-  // 既存行を検索して更新、なければ正しい位置に挿入
-  var found = sheet.createTextFinder(dateLabel).matchEntireCell(true).findAll()
-  if (found.length > 0) {
-    sheet.getRange(found[0].getRow(), 1, 1, HEADERS.length).setValues([row])
-  } else {
-    var insertPos = findInsertPosition(sheet, businessDate)
-    if (insertPos > 0) {
-      sheet.insertRowBefore(insertPos)
-      sheet.getRange(insertPos, 1, 1, HEADERS.length).setValues([row])
-    } else {
-      sheet.appendRow(row)
-    }
-  }
-}
-
-// 指定日付より後の最初の行番号を返す（なければ -1）
-function findInsertPosition(sheet, businessDate) {
-  var parts = businessDate.split('-')
-  var bdVal = parseInt(parts[1]) * 100 + parseInt(parts[2])
-
-  var lastRow = sheet.getLastRow()
-  if (lastRow <= 1) return -1
-
-  var col1 = sheet.getRange(2, 1, lastRow - 1, 1).getValues()
-  for (var i = 0; i < col1.length; i++) {
-    var cell = col1[i][0].toString()
-    var match = cell.match(/^(\d+)\/(\d+)/)
-    if (!match) continue
-    var rowVal = parseInt(match[1]) * 100 + parseInt(match[2])
-    if (rowVal > bdVal) return i + 2
-  }
-  return -1
+  // ★行を太字＋薄青背景で強調
+  starRowNums.forEach(function(rowNum) {
+    var r = sheet.getRange(rowNum, 1, 1, HEADERS.length)
+    r.setFontWeight('bold')
+    r.setBackground('#e8f0fe')
+  })
 }
 
 // ── スプレッドシート取得 or 作成（年月単位） ─────────────────────────
@@ -164,18 +183,18 @@ function getOrCreateSpreadsheet(yearMonth) {
   return ss
 }
 
-// ── シート取得 or 作成（ヘッダー付き） ───────────────────────────────
+// ── シート取得 or 作成（ヘッダー行を常に最新化） ─────────────────────
 function getOrCreateSheet(ss, title) {
   var sheet = ss.getSheetByName(title)
   if (!sheet) {
     sheet = ss.insertSheet(title)
-    var headerRange = sheet.getRange(1, 1, 1, HEADERS.length)
-    headerRange.setValues([HEADERS])
-    headerRange.setFontWeight('bold')
-    headerRange.setBackground('#4a86e8')
-    headerRange.setFontColor('#ffffff')
     sheet.setFrozenRows(1)
   }
+  var headerRange = sheet.getRange(1, 1, 1, HEADERS.length)
+  headerRange.setValues([HEADERS])
+  headerRange.setFontWeight('bold')
+  headerRange.setBackground('#4a86e8')
+  headerRange.setFontColor('#ffffff')
   return sheet
 }
 
@@ -229,6 +248,22 @@ function fetchExpensesForMonth(yearMonth) {
   return Array.isArray(data) ? data : []
 }
 
+// ── Supabase: blocks 取得（block_id → 席名 の変換用） ────────────────
+function fetchBlocks() {
+  var res = UrlFetchApp.fetch(
+    SUPABASE_URL + '/rest/v1/blocks?select=id,name',
+    {
+      headers: {
+        'apikey': SUPABASE_SERVICE_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_SERVICE_KEY,
+      },
+      muteHttpExceptions: true,
+    }
+  )
+  var data = JSON.parse(res.getContentText())
+  return Array.isArray(data) ? data : []
+}
+
 // ── Supabase: synced_to_sheet_at を更新 ──────────────────────────────
 function markSynced(ids) {
   var now = new Date().toISOString()
@@ -263,8 +298,8 @@ function toDateDisplay(businessDate) {
   return (d.getMonth() + 1) + '/' + d.getDate() + '(' + DAYS_JA[d.getDay()] + ')'
 }
 
-function formatYen(n) {
-  return '¥' + Number(n).toLocaleString('ja-JP')
+function formatJstTime(isoString) {
+  return Utilities.formatDate(new Date(isoString), 'Asia/Tokyo', 'HH:mm')
 }
 
 function respond(data) {
