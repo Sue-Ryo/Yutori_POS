@@ -162,7 +162,7 @@ export function OrderSidebar({
 
   const selectedCoupon = coupons.find((c) => c.id === selectedCouponId && c.isActive)
   const discountAmount = selectedCoupon
-    ? selectedCoupon.discountType === "amount"
+    ? selectedCoupon.discountType === "fixed"
       ? Math.min(selectedCoupon.discountValue, subtotal)
       : Math.round((subtotal * selectedCoupon.discountValue) / 100)
     : 0
@@ -666,7 +666,7 @@ export function OrderSidebar({
                 .map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}（
-                    {c.discountType === "amount"
+                    {c.discountType === "fixed"
                       ? `−¥${c.discountValue.toLocaleString()}`
                       : `−${c.discountValue}%`}
                     ）

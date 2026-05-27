@@ -418,7 +418,7 @@ function CouponsTab({
   const [adding, setAdding] = useState(false)
   const emptyCouponForm = {
     name: "",
-    discountType: "amount" as DiscountType,
+    discountType: "fixed" as DiscountType,
     discountValue: "",
   }
   const [form, setForm] = useState(emptyCouponForm)
@@ -512,7 +512,7 @@ function CouponsTab({
                     <Tag className="h-4 w-4 shrink-0 text-muted-foreground" />
                     <span className="flex-1 text-sm font-medium">{coupon.name}</span>
                     <span className="text-sm text-muted-foreground">
-                      {coupon.discountType === "amount"
+                      {coupon.discountType === "fixed"
                         ? `−¥${coupon.discountValue.toLocaleString()}`
                         : `−${coupon.discountValue}%`}
                     </span>
@@ -585,8 +585,8 @@ function CouponForm({
                 setForm((f) => ({ ...f, discountType: e.target.value as DiscountType }))
               }
             >
-              <option value="amount">金額割引 (円)</option>
-              <option value="rate">率割引 (%)</option>
+              <option value="fixed">金額割引 (円)</option>
+              <option value="percent">率割引 (%)</option>
             </select>
           </div>
           <div>
@@ -604,7 +604,7 @@ function CouponForm({
                 }}
               />
               <span className="text-sm text-muted-foreground">
-                {form.discountType === "amount" ? "円" : "%"}
+                {form.discountType === "fixed" ? "円" : "%"}
               </span>
             </div>
           </div>
@@ -649,8 +649,8 @@ function EditCouponRow({
         value={discountType}
         onChange={(e) => setDiscountType(e.target.value as DiscountType)}
       >
-        <option value="amount">円</option>
-        <option value="rate">%</option>
+        <option value="fixed">円</option>
+        <option value="percent">%</option>
       </select>
       <Input
         type="number"

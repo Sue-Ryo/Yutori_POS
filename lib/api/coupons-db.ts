@@ -5,7 +5,7 @@ function rowToCoupon(row: Record<string, unknown>): Coupon {
   return {
     id: String(row.id),
     name: row.name as string,
-    discountType: row.discount_type as Coupon["discountType"],
+    discountType: (row.discount_type as Coupon["discountType"]) ?? "fixed",
     discountValue: row.discount_value as number,
     validFrom: (row.valid_from as string | null) ?? undefined,
     validTo: (row.valid_to as string | null) ?? undefined,

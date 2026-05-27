@@ -20,8 +20,8 @@ export const products: Product[] = [
 ]
 
 export const coupons: Coupon[] = [
-  { id: "c1", name: "ウェルカムクーポン", discountType: "amount", discountValue: 500, isActive: true },
-  { id: "c2", name: "リピーター割引10%", discountType: "rate", discountValue: 10, isActive: true },
+  { id: "c1", name: "ウェルカムクーポン", discountType: "fixed", discountValue: 500, isActive: true },
+  { id: "c2", name: "リピーター割引10%", discountType: "percent", discountValue: 10, isActive: true },
 ]
 
 export const initialBlocks: ServiceBlock[] = [
