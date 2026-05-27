@@ -36,26 +36,33 @@ export async function fetchCoupons(storeId: number): Promise<Coupon[]> {
   return (data as Record<string, unknown>[]).map(rowToCoupon)
 }
 
-export async function syncCoupons(coupons: Coupon[], storeId: number): Promise<void> {
-  const { data: existing } = await supabase.from("coupons").select("id").eq("store_id", storeId)
-  const existingIds = ((existing ?? []) as { id: unknown }[]).map((r) => String(r.id))
+export async function insertCoupon(coupon: Omit<Coupon, "id">, storeId: number): Promise<Coupon> {
+  const { data, error } = await supabase
+    .from("coupons")
+    .insert({
+      name: coupon.name,
+      discount_type: coupon.discountType,
+      discount_value: coupon.discountValue,
+      is_active: coupon.isActive,
+      store_id: storeId,
+    })
+    .select()
+    .single()
+  if (error) throw error
+  return rowToCoupon(data as Record<string, unknown>)
+}
 
-  // DBに存在するIDのうち、ローカルに残っていないもの（実IDが一致するもの）を削除
-  const localDbIds = coupons.filter((c) => isDbId(c.id)).map((c) => c.id)
-  const toDelete = existingIds.filter((id) => !localDbIds.includes(id))
+export async function updateCouponDb(id: string, coupon: Partial<Omit<Coupon, "id">>, storeId: number): Promise<void> {
+  const updates: Record<string, unknown> = {}
+  if (coupon.name !== undefined) updates.name = coupon.name
+  if (coupon.discountType !== undefined) updates.discount_type = coupon.discountType
+  if (coupon.discountValue !== undefined) updates.discount_value = coupon.discountValue
+  if (coupon.isActive !== undefined) updates.is_active = coupon.isActive
+  const { error } = await supabase.from("coupons").update(updates).eq("id", Number(id)).eq("store_id", storeId)
+  if (error) throw error
+}
 
-  const toInsert = coupons.filter((c) => !isDbId(c.id))
-  const toUpsert = coupons.filter((c) => isDbId(c.id))
-
-  await Promise.all([
-    toDelete.length > 0
-      ? supabase.from("coupons").delete().in("id", toDelete).then(({ error }) => { if (error) throw error })
-      : Promise.resolve(),
-    toUpsert.length > 0
-      ? supabase.from("coupons").upsert(toUpsert.map((c) => couponToRow(c, storeId))).then(({ error }) => { if (error) throw error })
-      : Promise.resolve(),
-    toInsert.length > 0
-      ? supabase.from("coupons").insert(toInsert.map((c) => couponToRow(c, storeId))).then(({ error }) => { if (error) throw error })
-      : Promise.resolve(),
-  ])
+export async function deleteCoupon(id: string, storeId: number): Promise<void> {
+  const { error } = await supabase.from("coupons").delete().eq("id", Number(id)).eq("store_id", storeId)
+  if (error) throw error
 }

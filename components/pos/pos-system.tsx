@@ -37,7 +37,7 @@ import { fetchBlocks, upsertBlocks, syncBlocks } from "@/lib/api/blocks"
 import { fetchSessions, upsertSessions } from "@/lib/api/sessions"
 import { fetchPayments, upsertPayments } from "@/lib/api/payments-db"
 import { fetchSettings, upsertSettings } from "@/lib/api/settings-db"
-import { fetchCoupons, syncCoupons } from "@/lib/api/coupons-db"
+import { fetchCoupons, insertCoupon, updateCouponDb, deleteCoupon } from "@/lib/api/coupons-db"
 import { fetchLayoutElements, upsertLayoutElements } from "@/lib/api/layout-db"
 import { fetchExpenses, upsertExpense } from "@/lib/api/expenses-db"
 import { FloorMap } from "./floor-map"
@@ -227,10 +227,6 @@ export function POSSystem({ storeId }: { storeId: number }) {
     if (!initializedRef.current || dbSyncingRef.current) return
     upsertSettings(storeId, settings).catch((e) => console.error("[DB]settings:", e))
   }, [settings])
-  useEffect(() => {
-    if (!initializedRef.current || dbSyncingRef.current) return
-    syncCoupons(coupons, storeId).catch((e) => console.error("[DB]coupons:", e))
-  }, [coupons])
 
   // localStorage から読み込む（クライアントサイドのみ・save effectsより後に定義すること）
   useEffect(() => {
@@ -814,6 +810,33 @@ export function POSSystem({ storeId }: { storeId: number }) {
     }
   }, [products])
 
+  const handleUpdateCoupons = useCallback(async (newCoupons: Coupon[]) => {
+    const prev = coupons
+    const deleted = prev.filter((o) => !newCoupons.find((n) => n.id === o.id) && /^\d+$/.test(o.id))
+    const added = newCoupons.filter((n) => !/^\d+$/.test(n.id))
+    const changed = newCoupons.filter((n) => {
+      if (!/^\d+$/.test(n.id)) return false
+      const old = prev.find((o) => o.id === n.id)
+      return old && (old.name !== n.name || old.discountType !== n.discountType || old.discountValue !== n.discountValue || old.isActive !== n.isActive)
+    })
+
+    setCoupons(newCoupons)
+
+    try {
+      await Promise.all([
+        ...deleted.map((c) => deleteCoupon(c.id, storeId)),
+        ...changed.map((c) => updateCouponDb(c.id, c, storeId)),
+      ])
+      for (const c of added) {
+        const inserted = await insertCoupon(c, storeId)
+        setCoupons((prev) => prev.map((x) => x.id === c.id ? inserted : x))
+      }
+    } catch (err) {
+      console.error("[DB]coupons:", err)
+      setCoupons(prev)
+    }
+  }, [coupons, storeId])
+
   return (
     <div className="flex h-screen flex-col bg-background">
       {/* Header */}
@@ -980,7 +1003,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
             onCancelPayment={handleCancelPayment}
             onUpdateSettings={setSettings}
             onUpdateProducts={handleUpdateProducts}
-            onUpdateCoupons={setCoupons}
+            onUpdateCoupons={handleUpdateCoupons}
             onMarkPaymentsSynced={handleMarkPaymentsSynced}
             onUpsertExpense={handleUpsertExpense}
           />
