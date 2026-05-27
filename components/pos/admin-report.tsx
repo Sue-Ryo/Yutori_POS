@@ -1016,11 +1016,16 @@ export function AdminReport({
                     </div>
                   ) : (
                     <div className="space-y-3">
-                      {periodPayments.map((payment) => (
+                      {periodPayments.map((payment) => {
+                        const unsynced = !payment.canceledAt && !payment.syncedToSheetAt
+                        return (
                         <div
                           key={payment.id}
                           className={cn(
-                            "flex items-center justify-between rounded-lg border border-border p-4",
+                            "flex items-center justify-between rounded-lg border p-4",
+                            unsynced
+                              ? "border-destructive bg-destructive/5"
+                              : "border-border",
                             payment.canceledAt && "opacity-50",
                           )}
                         >
@@ -1041,6 +1046,11 @@ export function AdminReport({
                                   ? "現金"
                                   : "クレペイ"}
                               </span>
+                              {unsynced && (
+                                <span className="rounded-full bg-destructive/20 px-2 py-0.5 text-xs font-medium text-destructive">
+                                  未同期
+                                </span>
+                              )}
                               {payment.canceledAt && (
                                 <span className="rounded-full bg-destructive/20 px-2 py-0.5 text-xs text-destructive">
                                   取消済
@@ -1071,7 +1081,7 @@ export function AdminReport({
                             )}
                           </div>
                         </div>
-                      ))}
+                      )})}
                     </div>
                   )}
                 </CardContent>
