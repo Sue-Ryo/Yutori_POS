@@ -116,11 +116,10 @@ function rebuildAggregateRows(yearMonth) {
   sheet.getRange(2, 1, allRows.length, HEADERS.length).setValues(allRows)
 }
 
-// ── スプレッドシート取得 or 作成（年月単位） ─────────────────────────
+// ── スプレッドシート取得 or 作成（年次単位） ─────────────────────────
 function getOrCreateSpreadsheet(yearMonth) {
   var year  = yearMonth.slice(0, 4)
-  var month = parseInt(yearMonth.slice(5, 7), 10)
-  var title = year + '年' + month + '月'
+  var title = year + '年 会計'
   var folder = DriveApp.getFolderById(DRIVE_FOLDER_ID)
   var files = folder.getFilesByName(title)
   if (files.hasNext()) return SpreadsheetApp.open(files.next())
