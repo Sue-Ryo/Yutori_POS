@@ -7,14 +7,16 @@ import type {
   Coupon,
 } from "./pos-types"
 
-export const STORAGE_KEYS = {
-  blocks: "pos_blocks",
-  layoutElements: "pos_layout_elements",
-  sessions: "pos_sessions",
-  payments: "pos_payments",
-  settings: "pos_settings",
-  coupons: "pos_coupons",
-} as const
+export function storageKeys(storeId: number) {
+  return {
+    blocks: `pos_blocks_${storeId}`,
+    layoutElements: `pos_layout_elements_${storeId}`,
+    sessions: `pos_sessions_${storeId}`,
+    payments: `pos_payments_${storeId}`,
+    settings: `pos_settings_${storeId}`,
+    coupons: `pos_coupons_${storeId}`,
+  }
+}
 
 // Date文字列 → Date オブジェクト
 function d(v: unknown): Date | undefined {

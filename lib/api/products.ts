@@ -51,7 +51,7 @@ export async function createProduct(product: Omit<Product, "id">, storeId: numbe
   }
 }
 
-export async function updateProduct(id: string, updates: Partial<Omit<Product, "id">>): Promise<void> {
+export async function updateProduct(id: string, updates: Partial<Omit<Product, "id">>, storeId: number): Promise<void> {
   const dbUpdates: Record<string, unknown> = {}
   if (updates.category !== undefined) dbUpdates.category = updates.category
   if (updates.name !== undefined) dbUpdates.item_name = updates.name
@@ -59,11 +59,11 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, "
   if (updates.isActive !== undefined) dbUpdates.is_active = updates.isActive
   if (updates.displayOrder !== undefined) dbUpdates.display_order = updates.displayOrder
 
-  const { error } = await supabase.from("products").update(dbUpdates).eq("id", Number(id))
+  const { error } = await supabase.from("products").update(dbUpdates).eq("id", Number(id)).eq("store_id", storeId)
   if (error) throw error
 }
 
-export async function deleteProduct(id: string): Promise<void> {
-  const { error } = await supabase.from("products").delete().eq("id", Number(id))
+export async function deleteProduct(id: string, storeId: number): Promise<void> {
+  const { error } = await supabase.from("products").delete().eq("id", Number(id)).eq("store_id", storeId)
   if (error) throw error
 }

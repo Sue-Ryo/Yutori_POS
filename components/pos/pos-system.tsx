@@ -24,7 +24,7 @@ import {
   getBusinessDate,
 } from "@/lib/pos-store"
 import {
-  STORAGE_KEYS,
+  storageKeys,
   loadList,
   saveList,
   loadObject,
@@ -206,12 +206,13 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
   // 状態変化時に localStorage へ保存（初期ロード後のみ）
   // ※ このsave effectsは必ずloadEffectより前に定義すること（effect実行順序に依存）
-  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.blocks, blocks) }, [blocks])
-  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.layoutElements, layoutElements) }, [layoutElements])
-  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.sessions, sessions) }, [sessions])
-  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.payments, payments) }, [payments])
-  useEffect(() => { if (initializedRef.current) saveObject(STORAGE_KEYS.settings, settings) }, [settings])
-  useEffect(() => { if (initializedRef.current) saveList(STORAGE_KEYS.coupons, coupons) }, [coupons])
+  const KEYS = storageKeys(storeId)
+  useEffect(() => { if (initializedRef.current) saveList(KEYS.blocks, blocks) }, [blocks])
+  useEffect(() => { if (initializedRef.current) saveList(KEYS.layoutElements, layoutElements) }, [layoutElements])
+  useEffect(() => { if (initializedRef.current) saveList(KEYS.sessions, sessions) }, [sessions])
+  useEffect(() => { if (initializedRef.current) saveList(KEYS.payments, payments) }, [payments])
+  useEffect(() => { if (initializedRef.current) saveObject(KEYS.settings, settings) }, [settings])
+  useEffect(() => { if (initializedRef.current) saveList(KEYS.coupons, coupons) }, [coupons])
 
   // 状態変化時に Supabase へ同期（DB読み込み中は除外）
   useEffect(() => {
@@ -233,12 +234,12 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
   // localStorage から読み込む（クライアントサイドのみ・save effectsより後に定義すること）
   useEffect(() => {
-    const savedBlocks = loadList(STORAGE_KEYS.blocks, revivers.reviveBlock)
-    const savedElements = loadList(STORAGE_KEYS.layoutElements, (r) => r as unknown as LayoutElement)
-    const savedSessions = loadList(STORAGE_KEYS.sessions, revivers.reviveSession)
-    const savedPayments = loadList(STORAGE_KEYS.payments, revivers.revivePayment)
-    const savedSettings = loadObject<BusinessSettings>(STORAGE_KEYS.settings)
-    const savedCoupons = loadList(STORAGE_KEYS.coupons, (r) => r as unknown as Coupon)
+    const savedBlocks = loadList(KEYS.blocks, revivers.reviveBlock)
+    const savedElements = loadList(KEYS.layoutElements, (r) => r as unknown as LayoutElement)
+    const savedSessions = loadList(KEYS.sessions, revivers.reviveSession)
+    const savedPayments = loadList(KEYS.payments, revivers.revivePayment)
+    const savedSettings = loadObject<BusinessSettings>(KEYS.settings)
+    const savedCoupons = loadList(KEYS.coupons, (r) => r as unknown as Coupon)
     if (savedBlocks !== null) setBlocks(savedBlocks)
     if (savedElements !== null) setLayoutElements(savedElements)
     if (savedSessions !== null) setSessions(savedSessions)
@@ -802,9 +803,9 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
     try {
       await Promise.all([
-        ...deleted.map((p) => deleteProduct(p.id)),
+        ...deleted.map((p) => deleteProduct(p.id, storeId)),
         ...added.map((p) => createProduct(p, storeId)),
-        ...changed.map((p) => updateProduct(p.id, { name: p.name, price: p.price, isActive: p.isActive, category: p.category })),
+        ...changed.map((p) => updateProduct(p.id, { name: p.name, price: p.price, isActive: p.isActive, category: p.category }, storeId)),
       ])
     } catch (err) {
       console.error("商品更新エラー:", err)
