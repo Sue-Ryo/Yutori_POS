@@ -66,10 +66,6 @@ function rebuildAggregateRows(yearMonth) {
   var monthNum = parseInt(yearMonth.slice(5, 7), 10)
   var allPayments = fetchPaymentsForMonth(yearMonth)
   var expenseList = fetchExpensesForMonth(yearMonth)
-  var blocks = fetchBlocks()
-
-  var blockMap = {}
-  blocks.forEach(function(b) { blockMap[b.id] = b.name })
 
   var expenseMap = {}
   expenseList.forEach(function(e) { expenseMap[e.business_date] = e })
@@ -108,7 +104,7 @@ function rebuildAggregateRows(yearMonth) {
     var expenseCount  = expense ? (expense.receipt_count || 0) : 0
     var profit = totalSales - expenseAmt
 
-    // ★ 日付ヘッダー行
+    // 日次集計行
     starRowNums.push(allRows.length + 2)  // +2: 1行目はヘッダー、allRowsは0-indexed
     allRows.push([
       '★' + date,
@@ -121,42 +117,6 @@ function rebuildAggregateRows(yearMonth) {
       totalDiscount, totalTax,
       expenseAmt, expenseCount, profit
     ])
-
-    // 個別会計の明細行
-    dayPayments.forEach(function(p) {
-      var label = (p.customer_name && p.customer_name.trim())
-        ? p.customer_name.trim()
-        : (blockMap[p.block_id] || p.block_id)
-
-      var checkIn  = p.session_started_at ? formatJstTime(p.session_started_at) : ''
-      var checkOut = formatJstTime(p.payment_datetime)
-      var duration = p.session_started_at
-        ? Math.round((new Date(p.payment_datetime) - new Date(p.session_started_at)) / 60000)
-        : ''
-
-      var ca = p.cash_amount || 0
-      var cl = p.cashless_amount || 0
-      var method = ca > 0 && cl === 0 ? '現金'
-                 : cl > 0 && ca === 0 ? 'キャッシュレス'
-                 : ca > 0 && cl > 0   ? '併用'
-                 : ''
-
-      allRows.push([
-        '',
-        label,
-        p.guest_count || 0,
-        checkIn,
-        checkOut,
-        duration,
-        p.total_amount    || 0,
-        ca,
-        cl,
-        method,
-        p.discount_amount || 0,
-        p.tax_amount      || 0,
-        '', '', ''
-      ])
-    })
   })
 
   if (allRows.length === 0) return
@@ -244,22 +204,6 @@ function fetchExpensesForMonth(yearMonth) {
     },
     muteHttpExceptions: true,
   })
-  var data = JSON.parse(res.getContentText())
-  return Array.isArray(data) ? data : []
-}
-
-// ── Supabase: blocks 取得（block_id → 席名 の変換用） ────────────────
-function fetchBlocks() {
-  var res = UrlFetchApp.fetch(
-    SUPABASE_URL + '/rest/v1/blocks?select=id,name',
-    {
-      headers: {
-        'apikey': SUPABASE_SERVICE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_SERVICE_KEY,
-      },
-      muteHttpExceptions: true,
-    }
-  )
   var data = JSON.parse(res.getContentText())
   return Array.isArray(data) ? data : []
 }
