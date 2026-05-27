@@ -15,6 +15,16 @@ export default function Home() {
     setLoaded(true)
   }, [])
 
+  // 操作のたびにセッション有効期限をチェックし、切れていたらログイン画面へ
+  useEffect(() => {
+    if (!session) return
+    const check = () => {
+      if (!isSessionValid(getSession())) setSession(null)
+    }
+    window.addEventListener("pointerdown", check)
+    return () => window.removeEventListener("pointerdown", check)
+  }, [session])
+
   if (!loaded) return null
 
   if (!session) {
