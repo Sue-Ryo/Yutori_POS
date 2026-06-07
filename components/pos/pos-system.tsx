@@ -301,11 +301,14 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
   const bussingById = useCallback((blockId: string) => {
     const now = new Date()
-    const endedSession = sessions.find(
-      (s) =>
-        (s.blockId === blockId || (s.linkedBlockIds ?? []).includes(blockId)) &&
-        s.endedAt,
-    )
+    // 同一blockIdのセッションが過去分含め複数存在するため、最新のendedAtを持つものを選ぶ
+    const endedSession = sessions
+      .filter(
+        (s) =>
+          (s.blockId === blockId || (s.linkedBlockIds ?? []).includes(blockId)) &&
+          s.endedAt,
+      )
+      .sort((a, b) => b.endedAt!.getTime() - a.endedAt!.getTime())[0]
     // endedAt なしのゴーストセッションも検出して終了させる（DB 未同期の古いセッション対策）
     const ghostSession = sessions.find(
       (s) =>
@@ -749,16 +752,28 @@ export function POSSystem({ storeId }: { storeId: number }) {
     )
     upsertSessions([movedSession], storeId).catch((e) => console.error("[DB]sessions move:", e))
 
-    // ブロックのステータスを付け替え
+    // ブロックのステータスを付け替え（checkedOutAt も含めて完全転送）
     setBlocks((prev) =>
       prev.map((b) => {
-        if (b.id === moveSource) return { ...b, status: "empty", startedAt: undefined }
-        if (b.id === moveDest) return { ...b, status: sourceBlock?.status ?? "occupied", startedAt: sourceBlock?.startedAt }
+        if (b.id === moveSource) return { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
+        if (b.id === moveDest) return { ...b, status: sourceBlock?.status ?? "occupied", startedAt: sourceBlock?.startedAt, checkedOutAt: sourceBlock?.checkedOutAt }
         return b
       })
     )
 
-    setCustomerNames((prev) => { const next = { ...prev }; delete next[moveSource]; return next })
+    // ローカルキャッシュ（顧客名・ハッピーアワー）を移動元から移動先へ転送し、移動元は完全クリア
+    setCustomerNames((prev) => {
+      const next = { ...prev }
+      if (next[moveSource]) next[moveDest] = next[moveSource]
+      delete next[moveSource]
+      return next
+    })
+    setHappyHourByBlock((prev) => {
+      const next = { ...prev }
+      if (next[moveSource] !== undefined) next[moveDest] = next[moveSource]
+      delete next[moveSource]
+      return next
+    })
     setMoveMode(false)
     setMoveSource(null)
     setMoveDest(null)
