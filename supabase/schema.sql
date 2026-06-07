@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 -- payments テーブル
 CREATE TABLE IF NOT EXISTS payments (
   id TEXT PRIMARY KEY,
+  store_id INTEGER NOT NULL DEFAULT 1,
   session_id TEXT NOT NULL,
   block_id TEXT NOT NULL,
   payment_datetime TIMESTAMPTZ NOT NULL,
@@ -50,11 +51,12 @@ CREATE TABLE IF NOT EXISTS payments (
   note TEXT,
   canceled_at TIMESTAMPTZ,
   cancel_reason TEXT,
-  paid_item_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  paid_item_ids JSONB,
   coupon_id TEXT,
   customer_name TEXT,
   session_started_at TIMESTAMPTZ,
-  synced_to_sheet_at TIMESTAMPTZ
+  synced_to_sheet_at TIMESTAMPTZ,
+  square_payment_id TEXT
 );
 
 -- layout_elements テーブル
@@ -138,3 +140,15 @@ ALTER PUBLICATION supabase_realtime ADD TABLE sessions;
 ALTER PUBLICATION supabase_realtime ADD TABLE payments;
 ALTER PUBLICATION supabase_realtime ADD TABLE layout_elements;
 ALTER PUBLICATION supabase_realtime ADD TABLE daily_expenses;
+
+-- ============================================================
+-- Replica Identity（RLS + Realtime の併用に必要）
+-- RLS 有効テーブルで postgres_changes を受信するには
+-- REPLICA IDENTITY FULL の設定が必須
+-- ============================================================
+
+ALTER TABLE blocks REPLICA IDENTITY FULL;
+ALTER TABLE sessions REPLICA IDENTITY FULL;
+ALTER TABLE payments REPLICA IDENTITY FULL;
+ALTER TABLE layout_elements REPLICA IDENTITY FULL;
+ALTER TABLE daily_expenses REPLICA IDENTITY FULL;

@@ -412,18 +412,18 @@ export function POSSystem({ storeId }: { storeId: number }) {
         cashAmount: data.cashAmount,
         cashlessAmount: data.cashlessAmount,
         guestCount: data.guestCount,
-        paidItemIds: targetItemIds,
         couponId: data.couponId,
         customerName: data.customerName,
         sessionStartedAt: session.startedAt,
+        squarePaymentId: data.squarePaymentId,
       }
       setPayments((prev) => [newPayment, ...prev])
       upsertPayments([newPayment], storeId).catch((e) => console.error("[DB]payments checkout:", e))
 
-      // セッションの明細を支払済に更新
+      // セッションの明細を支払済に更新（paymentId を紐付け）
       const updatedItems = session.orderItems.map((i) =>
         targetItemIds.includes(i.id)
-          ? { ...i, isPaid: true, paidAt: now }
+          ? { ...i, isPaid: true, paidAt: now, paymentId: newPayment.id }
           : i
       )
       const allPaid = updatedItems.every((i) => i.isPaid)
@@ -472,10 +472,13 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
       // セッションの明細を未払いに戻す
       const cancelSession = sessions.find((s) => s.id === payment.sessionId)
+      const isPaidByThisPayment = (i: { id: string; paymentId?: string }) =>
+        i.paymentId === paymentId || payment.paidItemIds?.includes(i.id) === true
+
       if (cancelSession) {
         const updatedCancelItems = cancelSession.orderItems.map((i) =>
-          payment.paidItemIds.includes(i.id)
-            ? { ...i, isPaid: false, paidAt: undefined }
+          isPaidByThisPayment(i)
+            ? { ...i, isPaid: false, paidAt: undefined, paymentId: undefined }
             : i
         )
         const restoredSession = { ...cancelSession, orderItems: updatedCancelItems, endedAt: undefined }
@@ -485,8 +488,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
         prev.map((s) => {
           if (s.id !== payment.sessionId) return s
           const updatedItems = s.orderItems.map((i) =>
-            payment.paidItemIds.includes(i.id)
-              ? { ...i, isPaid: false, paidAt: undefined }
+            isPaidByThisPayment(i)
+              ? { ...i, isPaid: false, paidAt: undefined, paymentId: undefined }
               : i
           )
           return { ...s, orderItems: updatedItems, endedAt: undefined }

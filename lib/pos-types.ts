@@ -32,6 +32,7 @@ export interface OrderItem {
   orderedAt: Date
   isPaid: boolean
   paidAt?: Date
+  paymentId?: string
   originBlockId?: string
 }
 
@@ -78,6 +79,7 @@ export interface CheckoutData {
   paidItemIds: string[]
   customerName?: string
   sessionStartedAt?: Date
+  squarePaymentId?: string
 }
 
 export interface Payment {
@@ -96,11 +98,12 @@ export interface Payment {
   note?: string
   canceledAt?: Date
   cancelReason?: string
-  paidItemIds: string[]
+  paidItemIds?: string[]
   couponId?: string
   customerName?: string
   sessionStartedAt?: Date
   syncedToSheetAt?: Date
+  squarePaymentId?: string
 }
 
 export interface LayoutElement {

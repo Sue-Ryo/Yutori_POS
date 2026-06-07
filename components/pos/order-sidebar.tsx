@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo, useEffect, useRef } from "react"
 import { cn } from "@/lib/utils"
 import type {
   ServiceBlock,
@@ -33,6 +33,8 @@ import {
   ShoppingCart,
   Zap,
   CheckCheck,
+  Loader2,
+  AlertCircle,
 } from "lucide-react"
 
 import {
@@ -97,6 +99,10 @@ export function OrderSidebar({
   const [editingMemoId, setEditingMemoId] = useState<string | null>(null)
   const [showNightChargeWarning, setShowNightChargeWarning] = useState(false)
   const [noteText, setNoteText] = useState<string>(session?.note ?? "")
+  const [squareState, setSquareState] = useState<"idle" | "processing" | "error">("idle")
+  const [squareCheckoutId, setSquareCheckoutId] = useState<string | null>(null)
+  const [squareError, setSquareError] = useState<string | null>(null)
+  const squarePollActiveRef = useRef(false)
 
   useEffect(() => {
     setNoteText(session?.note ?? "")
@@ -108,6 +114,18 @@ export function OrderSidebar({
       setShowOrderModal(false)
       setPendingCounts({})
     }
+  }, [isOpen])
+
+  // サイドバーが閉じたら Square 処理もキャンセル
+  useEffect(() => {
+    if (!isOpen && squareState === "processing" && squareCheckoutId) {
+      squarePollActiveRef.current = false
+      fetch(`/api/square/checkout/${squareCheckoutId}`, { method: "DELETE" }).catch(() => {})
+      setSquareState("idle")
+      setSquareCheckoutId(null)
+      setSquareError(null)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
   const toggleCategory = (catId: string) => {
@@ -169,7 +187,11 @@ export function OrderSidebar({
 
   const taxBase = subtotal - discountAmount
   const taxAmount = Math.round((taxBase * settings.taxRate) / 100)
-  const totalAmount = taxBase + taxAmount
+  const rawTotal = taxBase + taxAmount
+  // クーポン適用時は100円未満を切り捨て（例: 3690→3600）
+  const totalAmount = selectedCoupon ? Math.floor(rawTotal / 100) * 100 : rawTotal
+  const roundingDiscount = rawTotal - totalAmount
+  const effectiveDiscountAmount = discountAmount + roundingDiscount
 
   const cashReceivedNum = parseInt(cashReceived, 10) || 0
   const change = cashReceivedNum - totalAmount
@@ -326,7 +348,7 @@ export function OrderSidebar({
     onCheckout(session.id, {
       cashAmount: totalAmount,
       cashlessAmount: 0,
-      discountAmount,
+      discountAmount: effectiveDiscountAmount,
       taxAmount,
       totalAmount,
       couponId: selectedCouponId || undefined,
@@ -337,21 +359,83 @@ export function OrderSidebar({
     resetCheckoutState()
   }
 
-  const handleCheckoutCashless = () => {
+  const handleCheckoutCashless = async () => {
     if (!session) return
-    const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
-    onCheckout(session.id, {
-      cashAmount: 0,
-      cashlessAmount: totalAmount,
-      discountAmount,
-      taxAmount,
-      totalAmount,
-      couponId: selectedCouponId || undefined,
-      guestCount,
-      paidItemIds,
-      customerName: resolvedCustomerName,
-    })
-    resetCheckoutState()
+    setSquareState("processing")
+    setSquareError(null)
+
+    try {
+      const createRes = await fetch("/api/square/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amountMoney: totalAmount, referenceId: session.id }),
+      })
+      const createData = await createRes.json() as { checkoutId?: string; error?: string }
+      if (!createRes.ok || !createData.checkoutId) throw new Error(createData.error ?? "Square エラー")
+
+      const checkoutId = createData.checkoutId
+      setSquareCheckoutId(checkoutId)
+      squarePollActiveRef.current = true
+
+      const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
+      const checkoutData = {
+        cashAmount: 0,
+        cashlessAmount: totalAmount,
+        discountAmount: effectiveDiscountAmount,
+        taxAmount,
+        totalAmount,
+        couponId: selectedCouponId || undefined,
+        guestCount,
+        paidItemIds,
+        customerName: resolvedCustomerName,
+      }
+
+      const poll = async () => {
+        if (!squarePollActiveRef.current) return
+        try {
+          const pollRes = await fetch(`/api/square/checkout/${checkoutId}`)
+          const pollData = await pollRes.json() as { status?: string; paymentId?: string; error?: string }
+
+          if (pollData.status === "COMPLETED") {
+            squarePollActiveRef.current = false
+            onCheckout(session.id, { ...checkoutData, squarePaymentId: pollData.paymentId ?? undefined })
+            resetCheckoutState()
+            setSquareState("idle")
+            setSquareCheckoutId(null)
+          } else if (pollData.status === "CANCELED" || pollData.status === "CANCEL_REQUESTED") {
+            squarePollActiveRef.current = false
+            setSquareState("idle")
+            setSquareCheckoutId(null)
+          } else if (pollData.status === "DECLINED" || pollData.error) {
+            squarePollActiveRef.current = false
+            setSquareState("error")
+            setSquareError(pollData.error ?? "決済が拒否されました")
+            setSquareCheckoutId(null)
+          } else {
+            setTimeout(poll, 2000)
+          }
+        } catch {
+          if (squarePollActiveRef.current) {
+            setTimeout(poll, 2000)
+          }
+        }
+      }
+
+      setTimeout(poll, 2000)
+    } catch (err) {
+      setSquareState("error")
+      setSquareError(err instanceof Error ? err.message : "エラーが発生しました")
+    }
+  }
+
+  const handleCancelSquare = async () => {
+    squarePollActiveRef.current = false
+    if (squareCheckoutId) {
+      await fetch(`/api/square/checkout/${squareCheckoutId}`, { method: "DELETE" }).catch(() => {})
+    }
+    setSquareState("idle")
+    setSquareCheckoutId(null)
+    setSquareError(null)
   }
 
   const handleCheckoutCombined = () => {
@@ -360,7 +444,7 @@ export function OrderSidebar({
     onCheckout(session.id, {
       cashAmount: combinedCashNum,
       cashlessAmount: combinedCashlessNum,
-      discountAmount,
+      discountAmount: effectiveDiscountAmount,
       taxAmount,
       totalAmount,
       couponId: selectedCouponId || undefined,
@@ -721,7 +805,39 @@ export function OrderSidebar({
             </div>
           </div>
 
-          {!combinedMode ? (
+          {squareState === "processing" && (
+            <div className="rounded-lg border border-info bg-info/10 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-info">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="font-bold">Square 決済処理中</span>
+              </div>
+              <p className="text-sm text-muted-foreground">端末でカードをタッチ・挿入してください</p>
+              <p className="text-lg font-bold">¥{totalAmount.toLocaleString()}</p>
+              <Button variant="outline" className="w-full" onClick={handleCancelSquare}>
+                キャンセル
+              </Button>
+            </div>
+          )}
+
+          {squareState === "error" && (
+            <div className="rounded-lg border border-destructive bg-destructive/10 p-3 space-y-2">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertCircle className="h-4 w-4" />
+                <span className="text-sm font-bold">Square 決済エラー</span>
+              </div>
+              <p className="text-xs text-destructive">{squareError}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => { setSquareState("idle"); setSquareError(null) }}
+              >
+                閉じる
+              </Button>
+            </div>
+          )}
+
+          {squareState === "idle" && (!combinedMode ? (
             <>
               <div className="flex items-center gap-2">
                 <Label className="whitespace-nowrap text-xs">預かり金</Label>
@@ -861,7 +977,7 @@ export function OrderSidebar({
                 </div>
               </Button>
             </>
-          )}
+          ))}
 
           {selectedBlock.status === "checked_out" && (
             <Button

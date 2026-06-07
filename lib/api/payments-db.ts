@@ -18,11 +18,12 @@ export function rowToPayment(row: Record<string, unknown>): Payment {
     note: (row.note as string | null) ?? undefined,
     canceledAt: row.canceled_at ? new Date(row.canceled_at as string) : undefined,
     cancelReason: (row.cancel_reason as string | null) ?? undefined,
-    paidItemIds: (row.paid_item_ids as string[]) ?? [],
+    paidItemIds: (row.paid_item_ids as string[] | null) ?? undefined,
     couponId: (row.coupon_id as string | null) ?? undefined,
     customerName: (row.customer_name as string | null) ?? undefined,
     sessionStartedAt: row.session_started_at ? new Date(row.session_started_at as string) : undefined,
     syncedToSheetAt: row.synced_to_sheet_at ? new Date(row.synced_to_sheet_at as string) : undefined,
+    squarePaymentId: (row.square_payment_id as string | null) ?? undefined,
   }
 }
 
@@ -43,11 +44,11 @@ function paymentToRow(payment: Payment, storeId: number): Record<string, unknown
     note: payment.note ?? null,
     canceled_at: payment.canceledAt?.toISOString() ?? null,
     cancel_reason: payment.cancelReason ?? null,
-    paid_item_ids: payment.paidItemIds,
     coupon_id: payment.couponId ?? null,
     customer_name: payment.customerName ?? null,
     session_started_at: payment.sessionStartedAt?.toISOString() ?? null,
     synced_to_sheet_at: payment.syncedToSheetAt?.toISOString() ?? null,
+    square_payment_id: payment.squarePaymentId ?? null,
     store_id: storeId,
   }
 }

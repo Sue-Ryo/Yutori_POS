@@ -75,10 +75,15 @@ export function FloorMap({
   }, [])
 
   // 連結情報を事前計算
+  // バッシング完了（empty）まで連結表示を維持する：会計済み(endedAt あり)でもプライマリブロックが checked_out なら連結扱い
   const linkedSecondaryIds = new Set<string>()
   const primaryWithLinkIds = new Set<string>()
   sessions
-    .filter((s) => !s.endedAt && s.linkedBlockIds && s.linkedBlockIds.length > 0)
+    .filter((s) => {
+      if (!s.linkedBlockIds || s.linkedBlockIds.length === 0) return false
+      if (!s.endedAt) return true
+      return blocks.find((b) => b.id === s.blockId)?.status === "checked_out"
+    })
     .forEach((s) => {
       primaryWithLinkIds.add(s.blockId)
       s.linkedBlockIds!.forEach((id) => linkedSecondaryIds.add(id))

@@ -37,7 +37,19 @@
       "Bash(python -m playwright install chromium)",
       "Bash(rm -f verify_0*.png)",
       "Bash(pkill -f \"next dev\")",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(npx md-to-pdf *)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\" -Recurse -Filter \"*.ts\" -o File)",
+      "Bash(Select-Object -First 20)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\\\\app\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\\\\components\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object Name)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\\\\components\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\\\\lib\" -Recurse | Where-Object { !$_.PSIsContainer } | Select-Object FullName)",
+      "Bash(Get-ChildItem -Path \"lib\" -Recurse -Name)",
+      "Bash(New-Item -ItemType Directory -Force \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\\\\app\\\\api\\\\square\\\\checkout\")",
+      "Bash(Out-Null)",
+      "Bash(New-Item -ItemType Directory -Force \"C:\\\\Users\\\\suena\\\\OneDrive\\\\デスクトップ\\\\yutori\\\\app\\\\api\\\\square\\\\checkout\\\\[checkoutId]\")",
+      "Bash(Write-Output \"done\")"
     ]
   }
 }
