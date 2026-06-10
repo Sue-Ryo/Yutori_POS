@@ -40,6 +40,7 @@ import {
   RefreshCw,
   LogOut,
 } from "lucide-react"
+import { NumericKeypadSheet } from "@/components/ui/numeric-keypad"
 import { getBusinessDate } from "@/lib/pos-store"
 import { clearSession } from "@/lib/session"
 import { hashPin, verifyPin } from "@/lib/pin"
@@ -688,6 +689,7 @@ function ExpenseCard({
   const [handoverNote, setHandoverNote] = useState("")
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<Date | undefined>()
+  const [keypad, setKeypad] = useState<{ target: "receiptCount" | "amount"; value: number } | null>(null)
 
   useEffect(() => {
     const exp = expenses.find((e) => e.businessDate === selectedDate)
@@ -725,24 +727,37 @@ function ExpenseCard({
         />
       </div>
       <div className="flex items-center gap-2">
-        <Input
-          type="number"
-          value={receiptCount}
-          min={0}
-          onChange={(e) => setReceiptCount(Math.max(0, Number(e.target.value)))}
-          className="h-8 w-14 bg-background text-center"
-          placeholder="0"
-        />
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setKeypad({ target: "receiptCount", value: receiptCount })}
+          onKeyDown={(e) => e.key === "Enter" && setKeypad({ target: "receiptCount", value: receiptCount })}
+          className="flex h-8 w-14 cursor-pointer select-none items-center justify-center rounded-md border border-input bg-background text-sm shadow-xs"
+        >
+          {receiptCount}
+        </div>
         <span className="shrink-0 text-xs text-muted-foreground">枚</span>
         <span className="shrink-0 text-muted-foreground">¥</span>
-        <Input
-          type="number"
-          value={amount}
-          min={0}
-          onChange={(e) => setAmount(Math.max(0, Number(e.target.value)))}
-          className="h-8 flex-1 bg-background"
-        />
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setKeypad({ target: "amount", value: amount })}
+          onKeyDown={(e) => e.key === "Enter" && setKeypad({ target: "amount", value: amount })}
+          className="flex h-8 flex-1 cursor-pointer select-none items-center rounded-md border border-input bg-background px-3 text-sm shadow-xs"
+        >
+          {amount > 0 ? amount.toLocaleString() : <span className="text-muted-foreground">0</span>}
+        </div>
       </div>
+      <NumericKeypadSheet
+        open={keypad !== null}
+        label={keypad?.target === "receiptCount" ? "枚数" : "金額（円）"}
+        initialValue={keypad?.value ?? 0}
+        onConfirm={(v) => {
+          if (keypad?.target === "receiptCount") setReceiptCount(v)
+          else if (keypad?.target === "amount") setAmount(v)
+        }}
+        onClose={() => setKeypad(null)}
+      />
       <div className="mt-2 flex items-center gap-2">
         <Input
           className="h-8 flex-1 bg-background text-sm"
