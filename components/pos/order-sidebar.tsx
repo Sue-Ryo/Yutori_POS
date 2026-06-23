@@ -775,7 +775,7 @@ export function OrderSidebar({
                         ? `−¥${c.discountValue.toLocaleString()}`
                         : c.discountType === "percent"
                         ? `−${c.discountValue}%`
-                        : "ワンドリンク無料"}
+                        : "1品無料"}
                       ）
                     </option>
                   ))}
@@ -790,7 +790,7 @@ export function OrderSidebar({
                       無料: {freeDrinkItem.name} (−¥{freeDrinkItem.price.toLocaleString()})
                     </span>
                   ) : (
-                    <span className="text-destructive">▶ 無料にするドリンクを選択</span>
+                    <span className="text-destructive">▶ 無料にする商品を選択</span>
                   )}
                 </button>
               )}
@@ -1060,7 +1060,7 @@ export function OrderSidebar({
           >
             <div className="flex items-center gap-3 border-b border-border px-4 py-3">
               <span className="text-lg">🍹</span>
-              <h3 className="flex-1 text-base font-bold">無料にするドリンクを選択</h3>
+              <h3 className="flex-1 text-base font-bold">無料にする商品を選択</h3>
               <Button variant="ghost" size="icon" onClick={() => setShowFreeDrinkModal(false)}>
                 <X className="h-5 w-5" />
               </Button>

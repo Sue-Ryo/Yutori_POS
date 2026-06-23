@@ -519,7 +519,7 @@ function CouponsTab({
                         ? `−¥${coupon.discountValue.toLocaleString()}`
                         : coupon.discountType === "percent"
                         ? `−${coupon.discountValue}%`
-                        : "ワンドリンク無料"}
+                        : "1品無料"}
                     </span>
                     <button
                       className="text-muted-foreground hover:text-foreground"
@@ -592,7 +592,7 @@ function CouponForm({
             >
               <option value="fixed">金額割引 (円)</option>
               <option value="percent">率割引 (%)</option>
-              <option value="free_drink">ワンドリンク無料</option>
+              <option value="free_drink">1品無料（商品選択）</option>
             </select>
           </div>
           {form.discountType !== "free_drink" && (
