@@ -91,6 +91,7 @@ export function OrderSidebar({
   const [splitMode, setSplitMode] = useState(false)
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [selectedCouponId, setSelectedCouponId] = useState<string>("")
+  const [showCashlessModal, setShowCashlessModal] = useState(false)
   const [cashReceived, setCashReceived] = useState<string>("")
   const [combinedMode, setCombinedMode] = useState(false)
   const [combinedCash, setCombinedCash] = useState<string>("")
@@ -440,6 +441,24 @@ export function OrderSidebar({
       setSquareState("error")
       setSquareError(err instanceof Error ? err.message : "エラーが発生しました")
     }
+  }
+
+  const handleCheckoutPayPay = () => {
+    if (!session) return
+    const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
+    onCheckout(session.id, {
+      cashAmount: 0,
+      cashlessAmount: totalAmount,
+      discountAmount: effectiveDiscountAmount,
+      taxAmount,
+      totalAmount,
+      couponId: selectedCouponId || undefined,
+      guestCount,
+      paidItemIds,
+      customerName: resolvedCustomerName,
+    })
+    setShowCashlessModal(false)
+    resetCheckoutState()
   }
 
   const handleCancelSquare = async () => {
@@ -909,7 +928,7 @@ export function OrderSidebar({
                   size="lg"
                   className="h-14 bg-info text-foreground hover:bg-info/90"
                   disabled={!session || totalAmount === 0}
-                  onClick={handleCheckoutCashless}
+                  onClick={() => setShowCashlessModal(true)}
                 >
                   <CreditCard className="mr-2 h-5 w-5" />
                   <div className="flex flex-col items-start">
@@ -1041,6 +1060,52 @@ export function OrderSidebar({
           )}
         </div>
       </div>
+
+      {/* ── キャッシュレス支払い方法選択 ─────────────────────────────── */}
+      {showCashlessModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50">
+          <div
+            className="mx-4 w-full max-w-xs rounded-xl bg-card p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="font-bold">支払い方法を選択</h3>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowCashlessModal(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <p className="mb-4 text-center text-lg font-bold">¥{totalAmount.toLocaleString()}</p>
+            <div className="space-y-2">
+              <Button
+                size="lg"
+                className="h-14 w-full bg-info text-foreground hover:bg-info/90"
+                onClick={() => {
+                  setShowCashlessModal(false)
+                  handleCheckoutCashless()
+                }}
+              >
+                <CreditCard className="mr-2 h-5 w-5" />
+                <div className="flex flex-col items-start">
+                  <span className="font-bold">カード決済</span>
+                  <span className="text-xs opacity-70">Square端末で処理</span>
+                </div>
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-14 w-full"
+                onClick={handleCheckoutPayPay}
+              >
+                <span className="mr-2 text-xl font-black text-[#e2103c]">P</span>
+                <div className="flex flex-col items-start">
+                  <span className="font-bold">PayPay</span>
+                  <span className="text-xs text-muted-foreground">QRコード決済</span>
+                </div>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── ナイトチャージ警告ポップアップ ──────────────────────────── */}
       {showNightChargeWarning && (
