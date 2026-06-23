@@ -91,8 +91,6 @@ export function OrderSidebar({
   const [splitMode, setSplitMode] = useState(false)
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [selectedCouponId, setSelectedCouponId] = useState<string>("")
-  const [selectedFreeDrinkItemId, setSelectedFreeDrinkItemId] = useState<string | null>(null)
-  const [showFreeDrinkModal, setShowFreeDrinkModal] = useState(false)
   const [cashReceived, setCashReceived] = useState<string>("")
   const [combinedMode, setCombinedMode] = useState(false)
   const [combinedCash, setCombinedCash] = useState<string>("")
@@ -181,9 +179,16 @@ export function OrderSidebar({
     : targetItems.reduce((sum, i) => sum + i.subtotal, 0)
 
   const selectedCoupon = coupons.find((c) => c.id === selectedCouponId && c.isActive)
-  const freeDrinkItem = selectedCoupon?.discountType === "free_drink"
-    ? unpaidItems.find((i) => i.id === selectedFreeDrinkItemId)
-    : null
+  const getItemCategory = (item: OrderItem) => item.category ?? productCategoryMap[item.productId]
+  const freeDrinkItem = (() => {
+    if (selectedCoupon?.discountType !== "free_drink") return null
+    const drinkItems = unpaidItems.filter((i) => getItemCategory(i) === "drink")
+    if (drinkItems.length === 0) return null
+    if (drinkItems.length === 1) return drinkItems[0]
+    // 2つ以上: 900円以下で最高額のドリンクを1つ無料
+    const candidates = drinkItems.filter((i) => i.price <= 900).sort((a, b) => b.price - a.price)
+    return candidates[0] ?? null
+  })()
   const discountAmount = selectedCoupon
     ? selectedCoupon.discountType === "fixed"
       ? Math.min(selectedCoupon.discountValue, subtotal)
@@ -468,7 +473,6 @@ export function OrderSidebar({
     setSplitMode(false)
     setSelectedItemIds([])
     setSelectedCouponId("")
-    setSelectedFreeDrinkItemId(null)
     setCashReceived("")
     setCombinedMode(false)
     setCombinedCash("")
@@ -753,17 +757,7 @@ export function OrderSidebar({
               <select
                 className="w-full rounded-md border border-border bg-background px-2 text-sm h-9"
                 value={selectedCouponId}
-                onChange={(e) => {
-                  const couponId = e.target.value
-                  setSelectedCouponId(couponId)
-                  const coupon = coupons.find((c) => c.id === couponId && c.isActive)
-                  if (coupon?.discountType === "free_drink") {
-                    setSelectedFreeDrinkItemId(null)
-                    setShowFreeDrinkModal(true)
-                  } else {
-                    setSelectedFreeDrinkItemId(null)
-                  }
-                }}
+                onChange={(e) => setSelectedCouponId(e.target.value)}
               >
                 <option value="">クーポンなし</option>
                 {coupons
@@ -781,18 +775,15 @@ export function OrderSidebar({
                   ))}
               </select>
               {selectedCoupon?.discountType === "free_drink" && (
-                <button
-                  className="flex items-center gap-1 text-xs text-left"
-                  onClick={() => setShowFreeDrinkModal(true)}
-                >
+                <span className="text-xs">
                   {freeDrinkItem ? (
                     <span className="text-warning font-medium">
                       無料: {freeDrinkItem.name} (−¥{freeDrinkItem.price.toLocaleString()})
                     </span>
                   ) : (
-                    <span className="text-destructive">▶ 無料にする商品を選択</span>
+                    <span className="text-muted-foreground">drinkカテゴリの注文がありません</span>
                   )}
-                </button>
+                </span>
               )}
             </div>
           </div>
@@ -1050,71 +1041,6 @@ export function OrderSidebar({
           )}
         </div>
       </div>
-
-      {/* ── ワンドリンク無料 選択モーダル ───────────────────────────── */}
-      {showFreeDrinkModal && (
-        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50">
-          <div
-            className="w-full max-w-md rounded-t-2xl bg-card shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-3 border-b border-border px-4 py-3">
-              <span className="text-lg">🍹</span>
-              <h3 className="flex-1 text-base font-bold">無料にする商品を選択</h3>
-              <Button variant="ghost" size="icon" onClick={() => setShowFreeDrinkModal(false)}>
-                <X className="h-5 w-5" />
-              </Button>
-            </div>
-            <div className="max-h-72 overflow-y-auto p-3 space-y-2">
-              {unpaidItems.length === 0 ? (
-                <p className="py-6 text-center text-sm text-muted-foreground">
-                  注文がありません
-                </p>
-              ) : (
-                unpaidItems.map((item) => (
-                  <button
-                    key={item.id}
-                    className={cn(
-                      "flex w-full items-center justify-between rounded-lg border-2 px-3 py-2.5 text-left transition-all",
-                      selectedFreeDrinkItemId === item.id
-                        ? "border-primary bg-primary/10"
-                        : "border-border bg-background hover:bg-muted/60",
-                    )}
-                    onClick={() => {
-                      setSelectedFreeDrinkItemId(item.id)
-                      setShowFreeDrinkModal(false)
-                    }}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium text-sm">{item.name}</p>
-                      {item.quantity > 1 && (
-                        <p className="text-xs text-muted-foreground">×{item.quantity} (1杯分無料)</p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-sm text-muted-foreground">
-                        ¥{item.price.toLocaleString()}
-                      </span>
-                      {selectedFreeDrinkItemId === item.id && (
-                        <Check className="h-4 w-4 text-primary" />
-                      )}
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-            <div className="border-t border-border p-3">
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => setShowFreeDrinkModal(false)}
-              >
-                キャンセル
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── ナイトチャージ警告ポップアップ ──────────────────────────── */}
       {showNightChargeWarning && (
