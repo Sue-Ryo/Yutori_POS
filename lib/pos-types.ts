@@ -1,7 +1,7 @@
 export type BlockStatus = "empty" | "reserved" | "occupied" | "checked_out"
 export type BlockType = "chair" | "sofa" | "counter" | "private_room" | "wall" | "counter_equipment" | "passage"
 export type ServingStatus = "unserved" | "served"
-export type DiscountType = "fixed" | "percent"
+export type DiscountType = "fixed" | "percent" | "free_drink"
 
 export interface ServiceBlock {
   id: string

@@ -425,12 +425,13 @@ function CouponsTab({
   const [form, setForm] = useState(emptyCouponForm)
 
   const handleAdd = () => {
-    if (!form.name.trim() || !form.discountValue) return
+    if (!form.name.trim()) return
+    if (form.discountType !== "free_drink" && !form.discountValue) return
     const newCoupon: Coupon = {
       id: `c-${Date.now()}`,
       name: form.name.trim(),
       discountType: form.discountType,
-      discountValue: Number(form.discountValue),
+      discountValue: form.discountType === "free_drink" ? 0 : Number(form.discountValue),
       isActive: true,
     }
     onUpdateCoupons([...coupons, newCoupon])
@@ -450,11 +451,12 @@ function CouponsTab({
   }
 
   const handleSave = (id: string, name: string, discountType: DiscountType, discountValue: string) => {
-    if (!name.trim() || !discountValue) return
+    if (!name.trim()) return
+    if (discountType !== "free_drink" && !discountValue) return
     onUpdateCoupons(
       coupons.map((c) =>
         c.id === id
-          ? { ...c, name: name.trim(), discountType, discountValue: Number(discountValue) }
+          ? { ...c, name: name.trim(), discountType, discountValue: discountType === "free_drink" ? 0 : Number(discountValue) }
           : c,
       ),
     )
@@ -515,7 +517,9 @@ function CouponsTab({
                     <span className="text-sm text-muted-foreground">
                       {coupon.discountType === "fixed"
                         ? `−¥${coupon.discountValue.toLocaleString()}`
-                        : `−${coupon.discountValue}%`}
+                        : coupon.discountType === "percent"
+                        ? `−${coupon.discountValue}%`
+                        : "ワンドリンク無料"}
                     </span>
                     <button
                       className="text-muted-foreground hover:text-foreground"
@@ -588,27 +592,30 @@ function CouponForm({
             >
               <option value="fixed">金額割引 (円)</option>
               <option value="percent">率割引 (%)</option>
+              <option value="free_drink">ワンドリンク無料</option>
             </select>
           </div>
-          <div>
-            <Label className="text-xs text-muted-foreground">割引値</Label>
-            <div className="mt-1 flex items-center gap-1">
-              <Input
-                type="number"
-                value={form.discountValue}
-                onChange={(e) => setForm((f) => ({ ...f, discountValue: e.target.value }))}
-                placeholder="0"
-                className="h-8 w-24"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") onSave()
-                  if (e.key === "Escape") onCancel()
-                }}
-              />
-              <span className="text-sm text-muted-foreground">
-                {form.discountType === "fixed" ? "円" : "%"}
-              </span>
+          {form.discountType !== "free_drink" && (
+            <div>
+              <Label className="text-xs text-muted-foreground">割引値</Label>
+              <div className="mt-1 flex items-center gap-1">
+                <Input
+                  type="number"
+                  value={form.discountValue}
+                  onChange={(e) => setForm((f) => ({ ...f, discountValue: e.target.value }))}
+                  placeholder="0"
+                  className="h-8 w-24"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") onSave()
+                    if (e.key === "Escape") onCancel()
+                  }}
+                />
+                <span className="text-sm text-muted-foreground">
+                  {form.discountType === "fixed" ? "円" : "%"}
+                </span>
+              </div>
             </div>
-          </div>
+          )}
         </div>
         <div className="flex justify-end gap-2">
           <Button size="sm" onClick={onSave}>
@@ -652,17 +659,20 @@ function EditCouponRow({
       >
         <option value="fixed">円</option>
         <option value="percent">%</option>
+        <option value="free_drink">無料</option>
       </select>
-      <Input
-        type="number"
-        value={discountValue}
-        onChange={(e) => setDiscountValue(e.target.value)}
-        className="h-7 w-16 text-sm"
-        onKeyDown={(e) => {
-          if (e.key === "Enter") onSave(coupon.id, name, discountType, discountValue)
-          if (e.key === "Escape") onCancel()
-        }}
-      />
+      {discountType !== "free_drink" && (
+        <Input
+          type="number"
+          value={discountValue}
+          onChange={(e) => setDiscountValue(e.target.value)}
+          className="h-7 w-16 text-sm"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onSave(coupon.id, name, discountType, discountValue)
+            if (e.key === "Escape") onCancel()
+          }}
+        />
+      )}
       <Button size="sm" className="h-7 px-2 shrink-0" onClick={() => onSave(coupon.id, name, discountType, discountValue)}>
         <Check className="h-3 w-3" />
       </Button>
