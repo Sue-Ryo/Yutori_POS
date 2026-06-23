@@ -182,7 +182,7 @@ export function OrderSidebar({
   const getItemCategory = (item: OrderItem) => item.category ?? productCategoryMap[item.productId]
   const freeDrinkItem = (() => {
     if (selectedCoupon?.discountType !== "free_drink") return null
-    const drinkItems = unpaidItems.filter((i) => getItemCategory(i) === "drink")
+    const drinkItems = unpaidItems.filter((i) => ["alcohol", "softdrink"].includes(getItemCategory(i) ?? ""))
     if (drinkItems.length === 0) return null
     if (drinkItems.length === 1) return drinkItems[0]
     // 2つ以上: 900円以下で最高額のドリンクを1つ無料
@@ -781,7 +781,7 @@ export function OrderSidebar({
                       無料: {freeDrinkItem.name} (−¥{freeDrinkItem.price.toLocaleString()})
                     </span>
                   ) : (
-                    <span className="text-muted-foreground">drinkカテゴリの注文がありません</span>
+                    <span className="text-muted-foreground">ドリンクの注文がありません</span>
                   )}
                 </span>
               )}
