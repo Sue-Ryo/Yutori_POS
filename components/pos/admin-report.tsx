@@ -819,7 +819,7 @@ export function AdminReport({
       const res = await fetch("/api/sheets/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ payments: unsynced }),
+        body: JSON.stringify({ payments: unsynced, storeId }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? "同期に失敗しました")
@@ -833,7 +833,7 @@ export function AdminReport({
     } finally {
       setSyncing(false)
     }
-  }, [payments, onMarkPaymentsSynced])
+  }, [payments, onMarkPaymentsSynced, storeId])
 
   const todayBD = getBusinessDate(new Date(), settings.businessDayStartTime)
 

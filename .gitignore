@@ -10,6 +10,9 @@ next.user-config.*
 # Environment variables
 .env*.local
 
+# DBバックアップ（顧客名・PINハッシュ等を含むためコミットしない）
+supabase/backup-*/
+
 # Common ignores
 node_modules
 .next/

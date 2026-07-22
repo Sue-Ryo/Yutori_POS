@@ -165,14 +165,14 @@ export function POSSystem({ storeId }: { storeId: number }) {
           setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]layout_elements:", e))
       })
-      .on("postgres_changes", { event: "*", schema: "public", table: "pos_settings" }, () => {
+      .on("postgres_changes", { event: "*", schema: "public", table: "stores" }, () => {
         fetchSettings(storeId).then((data) => {
           if (data) {
             dbSyncingRef.current = true
             setSettings(data)
             setTimeout(() => { dbSyncingRef.current = false }, 300)
           }
-        }).catch((e) => console.error("[RT]pos_settings:", e))
+        }).catch((e) => console.error("[RT]stores:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, () => {
         fetchCoupons(storeId).then((data) => {
