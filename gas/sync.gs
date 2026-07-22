@@ -143,7 +143,10 @@ function readExistingWeather(sheet) {
   var data = sheet.getRange(2, 1, lastRow - 1, WEATHER_COL).getValues()
   var map = {}
   data.forEach(function(row) {
-    if (row[0] && row[2]) map[row[0]] = row[2]
+    var key = row[0]
+    // Sheets が日付セルを Date 型で返す場合があるため M/D 文字列に正規化
+    if (key instanceof Date) key = (key.getMonth() + 1) + '/' + key.getDate()
+    if (key && row[2]) map[String(key)] = row[2]
   })
   return map
 }
@@ -274,42 +277,64 @@ function markSynced(ids) {
 }
 
 // ── Open-Meteo: 指定年の天気を取得（日付→天気文字列のマップ） ────────
-// アーカイブAPIは5日前まで対応。直近はシートの既存値をフォールバック
+// アーカイブAPIは約5日前までしか持たないため、
+// 直近分（過去7日+今日）は予報APIの past_days で補完する
 function fetchWeatherForYear(year) {
   var lat = PROPS.getProperty('STORE_LATITUDE') || '35.6895'
   var lng = PROPS.getProperty('STORE_LONGITUDE') || '139.6917'
 
+  var result = {}
+
+  // 年初〜5日前: アーカイブAPI
   var today = new Date()
   var cutoff = new Date(today)
   cutoff.setDate(cutoff.getDate() - 5)
-
   var startDateStr = year + '-01-01'
   var endDateStr = Utilities.formatDate(cutoff, 'Asia/Tokyo', 'yyyy-MM-dd')
+  if (endDateStr >= startDateStr) {
+    mergeWeatherFromApi(result, year,
+      'https://archive-api.open-meteo.com/v1/archive'
+      + '?latitude=' + lat
+      + '&longitude=' + lng
+      + '&start_date=' + startDateStr
+      + '&end_date=' + endDateStr
+      + '&daily=weathercode'
+      + '&timezone=Asia%2FTokyo')
+  }
 
-  if (endDateStr < startDateStr) return {}
+  // 直近（過去7日+今日）: 予報API。アーカイブ未反映分を上書きで補完
+  var thisYear = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy')
+  if (year === thisYear) {
+    mergeWeatherFromApi(result, year,
+      'https://api.open-meteo.com/v1/forecast'
+      + '?latitude=' + lat
+      + '&longitude=' + lng
+      + '&daily=weathercode&past_days=7&forecast_days=1'
+      + '&timezone=Asia%2FTokyo')
+  }
 
-  var url = 'https://archive-api.open-meteo.com/v1/archive'
-    + '?latitude=' + lat
-    + '&longitude=' + lng
-    + '&start_date=' + startDateStr
-    + '&end_date=' + endDateStr
-    + '&daily=weathercode'
-    + '&timezone=Asia%2FTokyo'
+  return result
+}
 
+// 天気APIを叩いて result に「M/D → 天気」を追記する
+function mergeWeatherFromApi(result, year, url) {
   try {
     var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true })
     var data = JSON.parse(res.getContentText())
-    var result = {}
-    if (data.daily && data.daily.time) {
-      data.daily.time.forEach(function(date, i) {
-        var d = new Date(date + 'T00:00:00')
-        var key = (d.getMonth() + 1) + '/' + d.getDate()
-        result[key] = wmoToJa(data.daily.weathercode[i])
-      })
+    if (!data.daily || !data.daily.time) {
+      Logger.log('[weather] APIエラー応答: %s', res.getContentText().slice(0, 200))
+      return
     }
-    return result
+    data.daily.time.forEach(function(date, i) {
+      if (date.slice(0, 4) !== String(year)) return  // 年またぎ分（1月頭のpast_days等）を除外
+      var code = data.daily.weathercode[i]
+      if (code === null || code === undefined) return
+      var d = new Date(date + 'T00:00:00')
+      var key = (d.getMonth() + 1) + '/' + d.getDate()
+      result[key] = wmoToJa(code)
+    })
   } catch (e) {
-    return {}
+    Logger.log('[weather] 取得失敗: %s', e)
   }
 }
 
