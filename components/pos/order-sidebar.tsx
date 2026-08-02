@@ -46,9 +46,16 @@ import {
   resolveCategory,
 } from "@/lib/hh-calc"
 
+import {
+  SQUARE_APP_ID,
+  buildSquarePosUrl,
+  savePendingSquareCheckout,
+} from "@/lib/square-pos-link"
+
 interface OrderSidebarProps {
   isOpen: boolean
   onClose: () => void
+  storeId: number
   selectedBlock: ServiceBlock | null
   session: BlockSession | null
   products: Product[]
@@ -69,6 +76,7 @@ interface OrderSidebarProps {
 export function OrderSidebar({
   isOpen,
   onClose,
+  storeId,
   selectedBlock,
   session,
   products,
@@ -379,11 +387,37 @@ export function OrderSidebar({
     setSquareState("processing")
     setSquareError(null)
 
+    // Square POSアプリ連携モード: 同一端末のSquareアプリへ切り替えて決済する。
+    // 結果はコールバックURL経由で pos-system 側が受け取り会計を記録する
+    if (SQUARE_APP_ID) {
+      const callbackUrl = `${window.location.origin}${window.location.pathname}`
+      const url = buildSquarePosUrl(totalAmount, callbackUrl, resolvedCustomerName)
+      if (!url) {
+        setSquareState("error")
+        setSquareError("この端末ではSquareアプリを起動できません。Squareアプリの入ったスマホ/タブレットでPOSを開いて会計してください")
+        return
+      }
+      const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
+      savePendingSquareCheckout(storeId, session.id, {
+        cashAmount: 0,
+        cashlessAmount: totalAmount,
+        discountAmount: effectiveDiscountAmount,
+        taxAmount,
+        totalAmount,
+        couponId: selectedCouponId || undefined,
+        guestCount,
+        paidItemIds,
+        customerName: resolvedCustomerName,
+      })
+      window.location.href = url
+      return
+    }
+
     try {
       const createRes = await fetch("/api/square/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amountMoney: totalAmount, referenceId: session.id }),
+        body: JSON.stringify({ amountMoney: totalAmount, referenceId: session.id, storeId }),
       })
       const createData = await createRes.json() as { checkoutId?: string; error?: string }
       if (!createRes.ok || !createData.checkoutId) throw new Error(createData.error ?? "Square エラー")

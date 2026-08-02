@@ -8,14 +8,21 @@ const SQUARE_VERSION = "2024-01-18"
 
 export async function POST(request: Request) {
   const token = process.env.SQUARE_ACCESS_TOKEN
-  const deviceId = process.env.SQUARE_DEVICE_ID
-  if (!token || !deviceId) {
+  if (!token) {
     return NextResponse.json({ error: "Square の環境変数が未設定です" }, { status: 500 })
   }
 
-  const { amountMoney, referenceId } = await request.json() as {
+  const { amountMoney, referenceId, storeId } = await request.json() as {
     amountMoney: number
     referenceId?: string
+    storeId?: number
+  }
+
+  // 店舗別ターミナル: SQUARE_DEVICE_ID_<storeId> を優先し、旧 SQUARE_DEVICE_ID にフォールバック
+  const deviceId = (storeId != null ? process.env[`SQUARE_DEVICE_ID_${storeId}`] : undefined)
+    ?? process.env.SQUARE_DEVICE_ID
+  if (!deviceId) {
+    return NextResponse.json({ error: `この店舗(storeId: ${storeId})のSquareターミナルが未設定です` }, { status: 500 })
   }
 
   const res = await fetch(`${SQUARE_BASE}/v2/terminals/checkouts`, {

@@ -42,6 +42,11 @@ import { fetchLayoutElements, upsertLayoutElements } from "@/lib/api/layout-db"
 import { fetchExpenses, upsertExpense } from "@/lib/api/expenses-db"
 import { FloorMap } from "./floor-map"
 import { OrderSidebar } from "./order-sidebar"
+import {
+  parseSquareCallback,
+  loadPendingSquareCheckout,
+  clearPendingSquareCheckout,
+} from "@/lib/square-pos-link"
 import { LayoutEditor } from "./layout-editor"
 import { AdminReport } from "./admin-report"
 import { Button } from "@/components/ui/button"
@@ -456,6 +461,35 @@ export function POSSystem({ storeId }: { storeId: number }) {
     },
     [sessions, settings.businessDayStartTime, handleCloseSidebar]
   )
+
+  // Square POSアプリからの決済結果コールバック処理（モバイルWeb連携）
+  const squareCallbackDoneRef = useRef(false)
+  useEffect(() => {
+    if (squareCallbackDoneRef.current) return
+    const params = new URLSearchParams(window.location.search)
+    const result = parseSquareCallback(params)
+    if (!result) {
+      squareCallbackDoneRef.current = true
+      return
+    }
+
+    const pending = loadPendingSquareCheckout(storeId)
+    // 決済成功なのに対象セッションが未取得の場合はDB読み込み完了を待って再評価
+    if (pending && result.ok && !sessions.some((s) => s.id === pending.sessionId) && dbLoading) {
+      return
+    }
+
+    squareCallbackDoneRef.current = true
+    window.history.replaceState(null, "", window.location.pathname)
+    if (!pending) return
+    clearPendingSquareCheckout(storeId)
+
+    if (result.ok) {
+      handleCheckout(pending.sessionId, { ...pending.data, squarePaymentId: result.transactionId })
+    } else if (result.errorCode !== "payment_canceled" && result.errorCode !== "TRANSACTION_CANCELED") {
+      alert(`Square決済エラー: ${result.errorCode}`)
+    }
+  }, [sessions, dbLoading, handleCheckout, storeId])
 
   const handleCancelPayment = useCallback(
     (paymentId: string) => {
@@ -1036,6 +1070,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
       {/* Order Sidebar */}
       <OrderSidebar
+        storeId={storeId}
         isOpen={sidebarOpen && activeTab === "map"}
         onClose={handleCloseSidebar}
         selectedBlock={selectedBlock}
