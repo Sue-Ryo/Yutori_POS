@@ -67,6 +67,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
   const [coupons, setCoupons] = useState<Coupon[]>(initialCoupons)
   const [expenses, setExpenses] = useState<DailyExpense[]>([])
   const [dbLoading, setDbLoading] = useState(false)
+  // DBからの初回読み込みが完了したか（未完了時は sessions がデモ初期値のため判定に使えない）
+  const [dbLoaded, setDbLoaded] = useState(false)
   const [dbError, setDbError] = useState<string | null>(null)
   const dbSyncingRef = useRef(false)
   const paymentsRef = useRef<Payment[]>([])
@@ -112,6 +114,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
       setDbError("データの取得に失敗しました（ローカルデータを使用）")
     } finally {
       setDbLoading(false)
+      setDbLoaded(true)
       setTimeout(() => {
         dbSyncingRef.current = false
         // localStorage にあった会計データを DB へ移行
@@ -473,23 +476,36 @@ export function POSSystem({ storeId }: { storeId: number }) {
       return
     }
 
-    const pending = loadPendingSquareCheckout(storeId)
-    // 決済成功なのに対象セッションが未取得の場合はDB読み込み完了を待って再評価
-    if (pending && result.ok && !sessions.some((s) => s.id === pending.sessionId) && dbLoading) {
-      return
-    }
+    // DB読み込み完了までは sessions が初期値のままで伝票を特定できないため待つ
+    if (!dbLoaded) return
 
     squareCallbackDoneRef.current = true
     window.history.replaceState(null, "", window.location.pathname)
-    if (!pending) return
+
+    const pending = loadPendingSquareCheckout(storeId)
+    if (!pending) {
+      if (result.ok) {
+        alert(`Square決済は完了しましたが、対象の会計情報が見つかりませんでした。手動で会計を記録してください。\n決済ID: ${result.transactionId ?? "不明"}`)
+      }
+      return
+    }
     clearPendingSquareCheckout(storeId)
 
-    if (result.ok) {
-      handleCheckout(pending.sessionId, { ...pending.data, squarePaymentId: result.transactionId })
-    } else if (result.errorCode !== "payment_canceled" && result.errorCode !== "TRANSACTION_CANCELED") {
-      alert(`Square決済エラー: ${result.errorCode}`)
+    if (!result.ok) {
+      if (result.errorCode !== "payment_canceled" && result.errorCode !== "TRANSACTION_CANCELED") {
+        alert(`Square決済エラー: ${result.errorCode}`)
+      }
+      return
     }
-  }, [sessions, dbLoading, handleCheckout, storeId])
+
+    // 決済は完了しているため、伝票が見つからない場合は取りこぼさず通知する
+    if (!sessions.some((s) => s.id === pending.sessionId)) {
+      alert(`Square決済は完了しましたが、対象の伝票が見つかりませんでした。手動で会計を記録してください。\n金額: ¥${pending.data.totalAmount.toLocaleString()}\n決済ID: ${result.transactionId ?? "不明"}`)
+      return
+    }
+
+    handleCheckout(pending.sessionId, { ...pending.data, squarePaymentId: result.transactionId })
+  }, [sessions, dbLoaded, handleCheckout, storeId])
 
   const handleCancelPayment = useCallback(
     (paymentId: string) => {
