@@ -100,6 +100,7 @@ export function OrderSidebar({
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
   const [selectedCouponId, setSelectedCouponId] = useState<string>("")
   const [showCashlessModal, setShowCashlessModal] = useState(false)
+  const [showPayPayQr, setShowPayPayQr] = useState(false)
   const [cashReceived, setCashReceived] = useState<string>("")
   const [combinedMode, setCombinedMode] = useState(false)
   const [combinedCash, setCombinedCash] = useState<string>("")
@@ -1128,13 +1129,70 @@ export function OrderSidebar({
                 size="lg"
                 variant="outline"
                 className="h-14 w-full"
-                onClick={handleCheckoutPayPay}
+                onClick={() => {
+                  setShowCashlessModal(false)
+                  setShowPayPayQr(true)
+                }}
               >
                 <span className="mr-2 text-xl font-black text-[#e2103c]">P</span>
                 <div className="flex flex-col items-start">
                   <span className="font-bold">PayPay</span>
                   <span className="text-xs text-muted-foreground">QRコード決済</span>
                 </div>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── PayPay QRコード表示モーダル ─────────────────────────────── */}
+      {showPayPayQr && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50">
+          <div
+            className="mx-4 w-full max-w-xs rounded-xl bg-card p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="font-bold">PayPayで支払い</h3>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowPayPayQr(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <p className="mb-3 text-center text-2xl font-bold">¥{totalAmount.toLocaleString()}</p>
+            {/* 店舗別QR（/paypay-qr-<storeId>.jpg）があれば優先し、なければ共通QRを表示 */}
+            <img
+              src={`/paypay-qr-${storeId}.jpg`}
+              alt="PayPay QRコード"
+              className="mx-auto w-full max-w-[240px] rounded-lg bg-white"
+              onError={(e) => {
+                const img = e.currentTarget
+                if (!img.src.endsWith("/paypay-qr.jpg")) img.src = "/paypay-qr.jpg"
+              }}
+            />
+            <p className="mt-3 text-center text-xs text-muted-foreground">
+              お客様にスキャンして金額を入力してもらい、支払い完了画面を確認してください
+            </p>
+            <div className="mt-4 space-y-2">
+              <Button
+                size="lg"
+                className="h-12 w-full"
+                onClick={() => {
+                  handleCheckoutPayPay()
+                  setShowPayPayQr(false)
+                }}
+              >
+                <Check className="mr-2 h-5 w-5" />
+                支払いを確認した（会計を記録）
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => {
+                  setShowPayPayQr(false)
+                  setShowCashlessModal(true)
+                }}
+              >
+                戻る
               </Button>
             </div>
           </div>
