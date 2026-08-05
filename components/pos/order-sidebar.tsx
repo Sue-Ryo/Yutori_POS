@@ -50,6 +50,7 @@ import {
   SQUARE_APP_ID,
   buildSquarePosUrl,
   savePendingSquareCheckout,
+  type SquareTender,
 } from "@/lib/square-pos-link"
 
 interface OrderSidebarProps {
@@ -366,53 +367,63 @@ export function OrderSidebar({
 
   const resolvedCustomerName = customerName.trim() || undefined
 
+  const buildCheckoutData = (cashAmount: number, cashlessAmount: number): CheckoutData => ({
+    cashAmount,
+    cashlessAmount,
+    discountAmount: effectiveDiscountAmount,
+    taxAmount,
+    totalAmount,
+    couponId: selectedCouponId || undefined,
+    guestCount,
+    paidItemIds: splitMode && selectedItemIds.length > 0 ? selectedItemIds : [],
+    customerName: resolvedCustomerName,
+  })
+
+  // Squareアプリへ切り替えて決済する。結果はコールバックURL経由で pos-system 側が
+  // 受け取り会計を記録するため、ここでは onCheckout を呼ばない。
+  // 起動できなかった場合は false を返す（会計は記録されない）
+  const launchSquarePos = (tenders: SquareTender[], data: CheckoutData): boolean => {
+    if (!session) return false
+    setSquareState("processing")
+    setSquareError(null)
+
+    const callbackUrl = `${window.location.origin}${window.location.pathname}`
+    const url = buildSquarePosUrl(data.totalAmount, callbackUrl, tenders, resolvedCustomerName)
+    if (!url) {
+      setSquareState("error")
+      setSquareError("この端末ではSquareアプリを起動できません。Squareアプリの入ったスマホ/タブレットでPOSを開いて会計してください")
+      return false
+    }
+
+    savePendingSquareCheckout(storeId, session.id, data)
+    window.location.href = url
+    return true
+  }
+
   const handleCheckoutCash = () => {
     if (!session) return
-    const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
-    onCheckout(session.id, {
-      cashAmount: totalAmount,
-      cashlessAmount: 0,
-      discountAmount: effectiveDiscountAmount,
-      taxAmount,
-      totalAmount,
-      couponId: selectedCouponId || undefined,
-      guestCount,
-      paidItemIds,
-      customerName: resolvedCustomerName,
-    })
+    const data = buildCheckoutData(totalAmount, 0)
+
+    if (SQUARE_APP_ID) {
+      launchSquarePos(["cash"], data)
+      return
+    }
+
+    onCheckout(session.id, data)
     resetCheckoutState()
   }
 
   const handleCheckoutCashless = async () => {
     if (!session) return
-    setSquareState("processing")
-    setSquareError(null)
 
-    // Square POSアプリ連携モード: 同一端末のSquareアプリへ切り替えて決済する。
-    // 結果はコールバックURL経由で pos-system 側が受け取り会計を記録する
+    // Square POSアプリ連携モード: 同一端末のSquareアプリへ切り替えて決済する
     if (SQUARE_APP_ID) {
-      const callbackUrl = `${window.location.origin}${window.location.pathname}`
-      const url = buildSquarePosUrl(totalAmount, callbackUrl, resolvedCustomerName)
-      if (!url) {
-        setSquareState("error")
-        setSquareError("この端末ではSquareアプリを起動できません。Squareアプリの入ったスマホ/タブレットでPOSを開いて会計してください")
-        return
-      }
-      const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
-      savePendingSquareCheckout(storeId, session.id, {
-        cashAmount: 0,
-        cashlessAmount: totalAmount,
-        discountAmount: effectiveDiscountAmount,
-        taxAmount,
-        totalAmount,
-        couponId: selectedCouponId || undefined,
-        guestCount,
-        paidItemIds,
-        customerName: resolvedCustomerName,
-      })
-      window.location.href = url
+      launchSquarePos(["card"], buildCheckoutData(0, totalAmount))
       return
     }
+
+    setSquareState("processing")
+    setSquareError(null)
 
     try {
       const createRes = await fetch("/api/square/checkout", {
@@ -427,18 +438,7 @@ export function OrderSidebar({
       setSquareCheckoutId(checkoutId)
       squarePollActiveRef.current = true
 
-      const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
-      const checkoutData = {
-        cashAmount: 0,
-        cashlessAmount: totalAmount,
-        discountAmount: effectiveDiscountAmount,
-        taxAmount,
-        totalAmount,
-        couponId: selectedCouponId || undefined,
-        guestCount,
-        paidItemIds,
-        customerName: resolvedCustomerName,
-      }
+      const checkoutData = buildCheckoutData(0, totalAmount)
 
       const poll = async () => {
         if (!squarePollActiveRef.current) return
@@ -478,20 +478,10 @@ export function OrderSidebar({
     }
   }
 
+  // PayPayは店頭QRでの受け取りのためSquareを経由せず、POSに直接記録する
   const handleCheckoutPayPay = () => {
     if (!session) return
-    const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
-    onCheckout(session.id, {
-      cashAmount: 0,
-      cashlessAmount: totalAmount,
-      discountAmount: effectiveDiscountAmount,
-      taxAmount,
-      totalAmount,
-      couponId: selectedCouponId || undefined,
-      guestCount,
-      paidItemIds,
-      customerName: resolvedCustomerName,
-    })
+    onCheckout(session.id, buildCheckoutData(0, totalAmount))
     setShowCashlessModal(false)
     resetCheckoutState()
   }
@@ -508,18 +498,16 @@ export function OrderSidebar({
 
   const handleCheckoutCombined = () => {
     if (!session || !combinedValid) return
-    const paidItemIds = splitMode && selectedItemIds.length > 0 ? selectedItemIds : []
-    onCheckout(session.id, {
-      cashAmount: combinedCashNum,
-      cashlessAmount: combinedCashlessNum,
-      discountAmount: effectiveDiscountAmount,
-      taxAmount,
-      totalAmount,
-      couponId: selectedCouponId || undefined,
-      guestCount,
-      paidItemIds,
-      customerName: resolvedCustomerName,
-    })
+    const data = buildCheckoutData(combinedCashNum, combinedCashlessNum)
+
+    // Squareアプリは合計金額で起動し、現金/カードへの分割はアプリ側で行う。
+    // コールバックに内訳は返らないため、POSにはここで入力した内訳を記録する
+    if (SQUARE_APP_ID) {
+      launchSquarePos(["cash", "card"], data)
+      return
+    }
+
+    onCheckout(session.id, data)
     resetCheckoutState()
   }
 
@@ -894,7 +882,9 @@ export function OrderSidebar({
                 <Loader2 className="h-5 w-5 animate-spin" />
                 <span className="font-bold">Square 決済処理中</span>
               </div>
-              <p className="text-sm text-muted-foreground">端末でカードをタッチ・挿入してください</p>
+              <p className="text-sm text-muted-foreground">
+                {SQUARE_APP_ID ? "Squareアプリを起動しています…" : "端末でカードをタッチ・挿入してください"}
+              </p>
               <p className="text-lg font-bold">¥{totalAmount.toLocaleString()}</p>
               <Button variant="outline" className="w-full" onClick={handleCancelSquare}>
                 キャンセル
@@ -956,7 +946,9 @@ export function OrderSidebar({
                   <Banknote className="mr-2 h-5 w-5" />
                   <div className="flex flex-col items-start">
                     <span className="font-bold">現金</span>
-                    <span className="text-xs opacity-80">キャッシュ</span>
+                    <span className="text-xs opacity-80">
+                      {SQUARE_APP_ID ? "Squareアプリで処理" : "キャッシュ"}
+                    </span>
                   </div>
                 </Button>
                 <Button
@@ -1122,7 +1114,9 @@ export function OrderSidebar({
                 <CreditCard className="mr-2 h-5 w-5" />
                 <div className="flex flex-col items-start">
                   <span className="font-bold">カード決済</span>
-                  <span className="text-xs opacity-70">Square端末で処理</span>
+                  <span className="text-xs opacity-70">
+                    {SQUARE_APP_ID ? "Squareアプリで処理" : "Square端末で処理"}
+                  </span>
                 </div>
               </Button>
               <Button

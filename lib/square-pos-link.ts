@@ -5,6 +5,20 @@ import type { CheckoutData } from "@/lib/pos-types"
 
 export const SQUARE_APP_ID = process.env.NEXT_PUBLIC_SQUARE_APPLICATION_ID
 
+// Squareアプリ側で受け付ける支払い手段。複合会計は複数を渡してアプリ内で分割してもらう
+export type SquareTender = "card" | "cash"
+
+const IOS_TENDER: Record<SquareTender, string> = {
+  // 日本ではeマネーも CREDIT_CARD 扱い
+  card: "CREDIT_CARD",
+  cash: "CASH",
+}
+
+const ANDROID_TENDER: Record<SquareTender, string> = {
+  card: "com.squareup.pos.TENDER_CARD",
+  cash: "com.squareup.pos.TENDER_CASH",
+}
+
 export type SquarePosResult =
   | { ok: true; transactionId?: string }
   | { ok: false; errorCode: string }
@@ -27,8 +41,14 @@ function isIOS(): boolean {
 }
 
 // Square POS アプリを起動するURLを返す。モバイル端末でなければ null
-export function buildSquarePosUrl(amount: number, callbackUrl: string, note?: string): string | null {
+export function buildSquarePosUrl(
+  amount: number,
+  callbackUrl: string,
+  tenders: SquareTender[],
+  note?: string,
+): string | null {
   if (!SQUARE_APP_ID) return null
+  if (tenders.length === 0) return null
 
   if (isIOS()) {
     const data = {
@@ -38,8 +58,7 @@ export function buildSquarePosUrl(amount: number, callbackUrl: string, note?: st
       version: "1.3",
       notes: note,
       options: {
-        // カード決済（日本ではeマネーも CREDIT_CARD 扱い）
-        supported_tender_types: ["CREDIT_CARD"],
+        supported_tender_types: tenders.map((t) => IOS_TENDER[t]),
       },
     }
     return `square-commerce-v1://payment/create?data=${encodeURIComponent(JSON.stringify(data))}`
@@ -56,7 +75,7 @@ export function buildSquarePosUrl(amount: number, callbackUrl: string, note?: st
       "S.com.squareup.pos.API_VERSION=v2.0",
       `i.com.squareup.pos.TOTAL_AMOUNT=${amount}`,
       "S.com.squareup.pos.CURRENCY_CODE=JPY",
-      "S.com.squareup.pos.TENDER_TYPES=com.squareup.pos.TENDER_CARD",
+      `S.com.squareup.pos.TENDER_TYPES=${tenders.map((t) => ANDROID_TENDER[t]).join(",")}`,
       ...(note ? [`S.com.squareup.pos.NOTE=${encodeURIComponent(note)}`] : []),
       "end",
     ].join(";")
