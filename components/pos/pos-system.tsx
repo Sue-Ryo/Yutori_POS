@@ -46,6 +46,7 @@ import {
   parseSquareCallback,
   loadPendingSquareCheckout,
   clearPendingSquareCheckout,
+  startSquarePosPayment,
 } from "@/lib/square-pos-link"
 import { LayoutEditor } from "./layout-editor"
 import { AdminReport } from "./admin-report"
@@ -489,22 +490,60 @@ export function POSSystem({ storeId }: { storeId: number }) {
       }
       return
     }
-    clearPendingSquareCheckout(storeId)
+
+    // 複合会計の現金分だけが決済済みで残っている場合は、取りこぼさないよう必ず知らせる
+    const cashLegDone = pending.phase === "cashless"
+    const cashLegNotice = cashLegDone
+      ? `\n※現金分 ¥${pending.data.cashAmount.toLocaleString()} はSquareで決済済みです（決済ID: ${pending.cashTransactionId ?? "不明"}）。Square側の取消要否を確認してください。`
+      : ""
 
     if (!result.ok) {
-      if (result.errorCode !== "payment_canceled" && result.errorCode !== "TRANSACTION_CANCELED") {
-        alert(`Square決済エラー: ${result.errorCode}`)
+      clearPendingSquareCheckout(storeId)
+      const canceled = result.errorCode === "payment_canceled" || result.errorCode === "TRANSACTION_CANCELED"
+      if (!canceled) {
+        alert(`Square決済エラー: ${result.errorCode}${cashLegNotice}`)
+      } else if (cashLegDone) {
+        alert(`クレペイ分の決済がキャンセルされたため、会計は記録していません。${cashLegNotice}`)
       }
       return
     }
 
     // 決済は完了しているため、伝票が見つからない場合は取りこぼさず通知する
     if (!sessions.some((s) => s.id === pending.sessionId)) {
-      alert(`Square決済は完了しましたが、対象の伝票が見つかりませんでした。手動で会計を記録してください。\n金額: ¥${pending.data.totalAmount.toLocaleString()}\n決済ID: ${result.transactionId ?? "不明"}`)
+      clearPendingSquareCheckout(storeId)
+      alert(`Square決済は完了しましたが、対象の伝票が見つかりませんでした。手動で会計を記録してください。\n金額: ¥${pending.data.totalAmount.toLocaleString()}\n決済ID: ${result.transactionId ?? "不明"}${cashLegNotice}`)
       return
     }
 
-    handleCheckout(pending.sessionId, { ...pending.data, squarePaymentId: result.transactionId })
+    // 複合会計: 現金分が終わったら続けてクレペイ分をSquareで決済する。
+    // ここでは会計を記録せず、2段階目のコールバックまで持ち越す
+    if (pending.phase === "cash") {
+      const launched = startSquarePosPayment(
+        storeId,
+        {
+          sessionId: pending.sessionId,
+          data: pending.data,
+          phase: "cashless",
+          cashTransactionId: result.transactionId,
+        },
+        pending.data.cashlessAmount,
+        "card",
+      )
+      if (!launched) {
+        clearPendingSquareCheckout(storeId)
+        alert(`現金分 ¥${pending.data.cashAmount.toLocaleString()} は決済できましたが、クレペイ分のSquareアプリを起動できませんでした。会計は記録していません。`)
+      }
+      return
+    }
+
+    clearPendingSquareCheckout(storeId)
+
+    // 複合会計は現金分とクレペイ分の2件の取引IDをまとめて残す
+    const squarePaymentId = pending.cashTransactionId
+      ? [pending.cashTransactionId, result.transactionId].filter(Boolean).join(",")
+      : result.transactionId
+
+    handleCheckout(pending.sessionId, { ...pending.data, squarePaymentId })
   }, [sessions, dbLoaded, handleCheckout, storeId])
 
   const handleCancelPayment = useCallback(

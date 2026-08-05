@@ -48,9 +48,9 @@ import {
 
 import {
   SQUARE_APP_ID,
-  buildSquarePosUrl,
-  savePendingSquareCheckout,
+  startSquarePosPayment,
   type SquareTender,
+  type SquarePhase,
 } from "@/lib/square-pos-link"
 
 interface OrderSidebarProps {
@@ -381,23 +381,27 @@ export function OrderSidebar({
 
   // Squareアプリへ切り替えて決済する。結果はコールバックURL経由で pos-system 側が
   // 受け取り会計を記録するため、ここでは onCheckout を呼ばない。
-  // 起動できなかった場合は false を返す（会計は記録されない）
-  const launchSquarePos = (tenders: SquareTender[], data: CheckoutData): boolean => {
-    if (!session) return false
+  // amount は複合会計で合計と異なるため個別に渡す
+  const launchSquarePos = (
+    tender: SquareTender,
+    data: CheckoutData,
+    amount: number = data.totalAmount,
+    phase?: SquarePhase,
+  ): void => {
+    if (!session) return
     setSquareState("processing")
     setSquareError(null)
 
-    const callbackUrl = `${window.location.origin}${window.location.pathname}`
-    const url = buildSquarePosUrl(data.totalAmount, callbackUrl, tenders, resolvedCustomerName)
-    if (!url) {
+    const launched = startSquarePosPayment(
+      storeId,
+      { sessionId: session.id, data, phase },
+      amount,
+      tender,
+    )
+    if (!launched) {
       setSquareState("error")
       setSquareError("この端末ではSquareアプリを起動できません。Squareアプリの入ったスマホ/タブレットでPOSを開いて会計してください")
-      return false
     }
-
-    savePendingSquareCheckout(storeId, session.id, data)
-    window.location.href = url
-    return true
   }
 
   const handleCheckoutCash = () => {
@@ -405,7 +409,7 @@ export function OrderSidebar({
     const data = buildCheckoutData(totalAmount, 0)
 
     if (SQUARE_APP_ID) {
-      launchSquarePos(["cash"], data)
+      launchSquarePos("cash", data)
       return
     }
 
@@ -418,7 +422,7 @@ export function OrderSidebar({
 
     // Square POSアプリ連携モード: 同一端末のSquareアプリへ切り替えて決済する
     if (SQUARE_APP_ID) {
-      launchSquarePos(["card"], buildCheckoutData(0, totalAmount))
+      launchSquarePos("card", buildCheckoutData(0, totalAmount))
       return
     }
 
@@ -500,10 +504,10 @@ export function OrderSidebar({
     if (!session || !combinedValid) return
     const data = buildCheckoutData(combinedCashNum, combinedCashlessNum)
 
-    // Squareアプリは合計金額で起動し、現金/カードへの分割はアプリ側で行う。
-    // コールバックに内訳は返らないため、POSにはここで入力した内訳を記録する
+    // Squareアプリは1回の起動で分割できないため、まず現金分だけを決済する。
+    // 復帰後にクレペイ分の決済が pos-system 側から続けて起動される
     if (SQUARE_APP_ID) {
-      launchSquarePos(["cash", "card"], data)
+      launchSquarePos("cash", data, combinedCashNum, "cash")
       return
     }
 

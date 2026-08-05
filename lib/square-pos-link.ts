@@ -23,10 +23,19 @@ export type SquarePosResult =
   | { ok: true; transactionId?: string }
   | { ok: false; errorCode: string }
 
+// Point of Sale API は「合計金額を1回渡す」インターフェースで、supported_tender_types に
+// 複数指定してもアプリ側で分割はできない。そのため複合会計は
+// 現金分 → クレペイ分 の2回に分けてアプリを起動する
+export type SquarePhase = "cash" | "cashless"
+
 export interface PendingSquareCheckout {
   sessionId: string
   data: CheckoutData
   createdAt: number
+  // 複合会計のときだけ設定される。未設定なら単発の会計
+  phase?: SquarePhase
+  // 複合会計1段階目（現金）の取引ID。2段階目の完了時に一緒に記録する
+  cashTransactionId?: string
 }
 
 // 起動から復帰までの想定上限。これを超えた保留会計は破棄する
@@ -40,15 +49,16 @@ function isIOS(): boolean {
   return /iPhone|iPad|iPod/.test(ua) || (ua.includes("Macintosh") && navigator.maxTouchPoints > 1)
 }
 
-// Square POS アプリを起動するURLを返す。モバイル端末でなければ null
+// Square POS アプリを起動するURLを返す。モバイル端末でなければ null。
+// tender が単数なのは Point of Sale API が1回の起動で1つの支払い手段しか
+// 精算できないため（複合会計は呼び出し側で2回に分ける）
 export function buildSquarePosUrl(
   amount: number,
   callbackUrl: string,
-  tenders: SquareTender[],
+  tender: SquareTender,
   note?: string,
 ): string | null {
   if (!SQUARE_APP_ID) return null
-  if (tenders.length === 0) return null
 
   if (isIOS()) {
     const data = {
@@ -58,7 +68,7 @@ export function buildSquarePosUrl(
       version: "1.3",
       notes: note,
       options: {
-        supported_tender_types: tenders.map((t) => IOS_TENDER[t]),
+        supported_tender_types: [IOS_TENDER[tender]],
       },
     }
     return `square-commerce-v1://payment/create?data=${encodeURIComponent(JSON.stringify(data))}`
@@ -75,7 +85,7 @@ export function buildSquarePosUrl(
       "S.com.squareup.pos.API_VERSION=v2.0",
       `i.com.squareup.pos.TOTAL_AMOUNT=${amount}`,
       "S.com.squareup.pos.CURRENCY_CODE=JPY",
-      `S.com.squareup.pos.TENDER_TYPES=${tenders.map((t) => ANDROID_TENDER[t]).join(",")}`,
+      `S.com.squareup.pos.TENDER_TYPES=${ANDROID_TENDER[tender]}`,
       ...(note ? [`S.com.squareup.pos.NOTE=${encodeURIComponent(note)}`] : []),
       "end",
     ].join(";")
@@ -84,9 +94,29 @@ export function buildSquarePosUrl(
   return null
 }
 
-export function savePendingSquareCheckout(storeId: number, sessionId: string, data: CheckoutData): void {
-  const pending: PendingSquareCheckout = { sessionId, data, createdAt: Date.now() }
-  localStorage.setItem(pendingKey(storeId), JSON.stringify(pending))
+export function savePendingSquareCheckout(
+  storeId: number,
+  pending: Omit<PendingSquareCheckout, "createdAt">,
+): void {
+  const stored: PendingSquareCheckout = { ...pending, createdAt: Date.now() }
+  localStorage.setItem(pendingKey(storeId), JSON.stringify(stored))
+}
+
+// 保留中の会計を保存してから Square アプリへ遷移する。
+// 起動できない端末では何も保存せず false を返す（会計は記録されない）
+export function startSquarePosPayment(
+  storeId: number,
+  pending: Omit<PendingSquareCheckout, "createdAt">,
+  amount: number,
+  tender: SquareTender,
+): boolean {
+  const callbackUrl = `${window.location.origin}${window.location.pathname}`
+  const url = buildSquarePosUrl(amount, callbackUrl, tender, pending.data.customerName)
+  if (!url) return false
+
+  savePendingSquareCheckout(storeId, pending)
+  window.location.href = url
+  return true
 }
 
 export function loadPendingSquareCheckout(storeId: number): PendingSquareCheckout | null {

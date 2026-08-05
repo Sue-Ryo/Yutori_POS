@@ -7,7 +7,7 @@ process.env.NEXT_PUBLIC_SQUARE_APPLICATION_ID = "sq0idp-test"
 type BuildFn = (
   amount: number,
   callbackUrl: string,
-  tenders: SquareTender[],
+  tender: SquareTender,
   note?: string,
 ) => string | null
 
@@ -49,25 +49,17 @@ afterEach(() => {
 describe("buildSquarePosUrl / iOS", () => {
   it("現金会計は CASH のみを許可する", () => {
     setUserAgent(IPHONE)
-    expect(iosTenders(buildSquarePosUrl(3000, CALLBACK, ["cash"])!)).toEqual(["CASH"])
+    expect(iosTenders(buildSquarePosUrl(3000, CALLBACK, "cash")!)).toEqual(["CASH"])
   })
 
   it("カード会計は CREDIT_CARD のみを許可する", () => {
     setUserAgent(IPHONE)
-    expect(iosTenders(buildSquarePosUrl(3000, CALLBACK, ["card"])!)).toEqual(["CREDIT_CARD"])
-  })
-
-  it("複合会計はアプリ内で分割できるよう現金とカードを許可する", () => {
-    setUserAgent(IPHONE)
-    expect(iosTenders(buildSquarePosUrl(3000, CALLBACK, ["cash", "card"])!)).toEqual([
-      "CASH",
-      "CREDIT_CARD",
-    ])
+    expect(iosTenders(buildSquarePosUrl(3000, CALLBACK, "card")!)).toEqual(["CREDIT_CARD"])
   })
 
   it("金額・コールバック・備考を渡す", () => {
     setUserAgent(IPHONE)
-    const url = buildSquarePosUrl(4200, CALLBACK, ["cash"], "山田様")!
+    const url = buildSquarePosUrl(4200, CALLBACK, "cash", "山田様")!
     const data = JSON.parse(
       decodeURIComponent(url.replace("square-commerce-v1://payment/create?data=", "")),
     )
@@ -78,28 +70,43 @@ describe("buildSquarePosUrl / iOS", () => {
 
   it("iPadOS はタッチ数で iOS と判定する", () => {
     setUserAgent(IPAD, 5)
-    expect(buildSquarePosUrl(3000, CALLBACK, ["cash"])).toMatch(/^square-commerce-v1:/)
+    expect(buildSquarePosUrl(3000, CALLBACK, "cash")).toMatch(/^square-commerce-v1:/)
+  })
+
+  // Point of Sale API は1回の起動で1つの tender しか精算できないため、
+  // 複合会計は現金分・クレペイ分を別々の金額で2回起動する
+  it("複合会計は現金分とクレペイ分を別々の金額・tenderで起動する", () => {
+    setUserAgent(IPHONE)
+    const cashLeg = buildSquarePosUrl(2000, CALLBACK, "cash")!
+    const cardLeg = buildSquarePosUrl(1800, CALLBACK, "card")!
+
+    expect(iosTenders(cashLeg)).toEqual(["CASH"])
+    expect(iosTenders(cardLeg)).toEqual(["CREDIT_CARD"])
+
+    const amountOf = (url: string) =>
+      JSON.parse(decodeURIComponent(url.replace("square-commerce-v1://payment/create?data=", "")))
+        .amount_money.amount
+    expect(amountOf(cashLeg)).toBe(2000)
+    expect(amountOf(cardLeg)).toBe(1800)
   })
 })
 
 describe("buildSquarePosUrl / Android", () => {
   it("現金会計は TENDER_CASH を渡す", () => {
     setUserAgent(ANDROID)
-    const url = buildSquarePosUrl(3000, CALLBACK, ["cash"])!
+    const url = buildSquarePosUrl(3000, CALLBACK, "cash")!
     expect(intentValue(url, "S.com.squareup.pos.TENDER_TYPES")).toBe("com.squareup.pos.TENDER_CASH")
   })
 
-  it("複合会計は tender をカンマ区切りで渡す", () => {
+  it("カード会計は TENDER_CARD を渡す", () => {
     setUserAgent(ANDROID)
-    const url = buildSquarePosUrl(3000, CALLBACK, ["cash", "card"])!
-    expect(intentValue(url, "S.com.squareup.pos.TENDER_TYPES")).toBe(
-      "com.squareup.pos.TENDER_CASH,com.squareup.pos.TENDER_CARD",
-    )
+    const url = buildSquarePosUrl(3000, CALLBACK, "card")!
+    expect(intentValue(url, "S.com.squareup.pos.TENDER_TYPES")).toBe("com.squareup.pos.TENDER_CARD")
   })
 
   it("金額とコールバックを渡す", () => {
     setUserAgent(ANDROID)
-    const url = buildSquarePosUrl(4200, CALLBACK, ["card"])!
+    const url = buildSquarePosUrl(4200, CALLBACK, "card")!
     expect(intentValue(url, "i.com.squareup.pos.TOTAL_AMOUNT")).toBe("4200")
     expect(intentValue(url, "S.com.squareup.pos.WEB_CALLBACK_URI")).toBe(encodeURIComponent(CALLBACK))
   })
@@ -108,11 +115,6 @@ describe("buildSquarePosUrl / Android", () => {
 describe("buildSquarePosUrl / 起動できない場合", () => {
   it("PCブラウザでは null を返す", () => {
     setUserAgent(DESKTOP)
-    expect(buildSquarePosUrl(3000, CALLBACK, ["cash"])).toBeNull()
-  })
-
-  it("tender が空なら null を返す", () => {
-    setUserAgent(IPHONE)
-    expect(buildSquarePosUrl(3000, CALLBACK, [])).toBeNull()
+    expect(buildSquarePosUrl(3000, CALLBACK, "cash")).toBeNull()
   })
 })
