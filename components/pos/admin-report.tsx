@@ -13,7 +13,8 @@ import type {
 } from "@/lib/pos-types"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
+import { Input, inputVariants } from "@/components/ui/input"
+import { ImeInput, isComposingEvent } from "@/components/ui/ime-input"
 import { Label } from "@/components/ui/label"
 import {
   DollarSign,
@@ -200,7 +201,7 @@ function ProductsTab({
               onChange={(e) => setNewCategoryName(e.target.value)}
               className="h-8"
               onKeyDown={(e) => {
-                if (e.key === "Enter") handleAddNewCategory()
+                if (e.key === "Enter" && !isComposingEvent(e)) handleAddNewCategory()
                 if (e.key === "Escape") setShowNewCategoryInput(false)
               }}
             />
@@ -272,7 +273,7 @@ function ProductsTab({
                       onChange={(e) => setProductForm((f) => ({ ...f, price: e.target.value }))}
                       className="h-7 w-20 text-sm"
                       onKeyDown={(e) => {
-                        if (e.key === "Enter") handleAddProduct(catName)
+                        if (e.key === "Enter" && !isComposingEvent(e)) handleAddProduct(catName)
                         if (e.key === "Escape") setAddingCategory(null)
                       }}
                     />
@@ -383,7 +384,7 @@ function EditProductRow({
             onChange={(e) => setPrice(e.target.value)}
             className="h-7 w-20 text-sm"
             onKeyDown={(e) => {
-              if (e.key === "Enter") onSave(product.id, name, price, category)
+              if (e.key === "Enter" && !isComposingEvent(e)) onSave(product.id, name, price, category)
               if (e.key === "Escape") onCancel()
             }}
           />
@@ -606,7 +607,7 @@ function CouponForm({
                   placeholder="0"
                   className="h-8 w-24"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") onSave()
+                    if (e.key === "Enter" && !isComposingEvent(e)) onSave()
                     if (e.key === "Escape") onCancel()
                   }}
                 />
@@ -668,7 +669,7 @@ function EditCouponRow({
           onChange={(e) => setDiscountValue(e.target.value)}
           className="h-7 w-16 text-sm"
           onKeyDown={(e) => {
-            if (e.key === "Enter") onSave(coupon.id, name, discountType, discountValue)
+            if (e.key === "Enter" && !isComposingEvent(e)) onSave(coupon.id, name, discountType, discountValue)
             if (e.key === "Escape") onCancel()
           }}
         />
@@ -741,7 +742,7 @@ function ExpenseCard({
           role="button"
           tabIndex={0}
           onClick={() => setKeypad({ target: "receiptCount", value: receiptCount })}
-          onKeyDown={(e) => e.key === "Enter" && setKeypad({ target: "receiptCount", value: receiptCount })}
+          onKeyDown={(e) => e.key === "Enter" && !isComposingEvent(e) && setKeypad({ target: "receiptCount", value: receiptCount })}
           className="flex h-8 w-14 cursor-pointer select-none items-center justify-center rounded-md border border-input bg-background text-sm shadow-xs"
         >
           {receiptCount}
@@ -752,7 +753,7 @@ function ExpenseCard({
           role="button"
           tabIndex={0}
           onClick={() => setKeypad({ target: "amount", value: amount })}
-          onKeyDown={(e) => e.key === "Enter" && setKeypad({ target: "amount", value: amount })}
+          onKeyDown={(e) => e.key === "Enter" && !isComposingEvent(e) && setKeypad({ target: "amount", value: amount })}
           className="flex h-8 flex-1 cursor-pointer select-none items-center rounded-md border border-input bg-background px-3 text-sm shadow-xs"
         >
           {amount > 0 ? amount.toLocaleString() : <span className="text-muted-foreground">0</span>}
@@ -1144,11 +1145,12 @@ export function AdminReport({
                 <div className="grid gap-5 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="store-name">店舗名</Label>
-                    <Input
+                    <ImeInput
                       id="store-name"
+                      className={cn(...inputVariants)}
                       value={settings.storeName}
-                      onChange={(e) =>
-                        onUpdateSettings({ ...settings, storeName: e.target.value })
+                      onValueChange={(storeName) =>
+                        onUpdateSettings({ ...settings, storeName })
                       }
                     />
                   </div>

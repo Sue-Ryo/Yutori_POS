@@ -55,6 +55,18 @@ import { LayoutGrid, Edit3, BarChart3, UtensilsCrossed, RefreshCw, Link2, ArrowR
 
 type Tab = "map" | "editor" | "report"
 
+// 下膳（空席化）時に持ち越してはいけない接客情報を落とす。
+// 会計時の顧客名は payments 側へ別途コピー済みのため、売上履歴には影響しない。
+const stripGuestInfo = (s: BlockSession): BlockSession => ({
+  ...s,
+  customerName: undefined,
+  note: undefined,
+  // happy_hour は NOT NULL 相当で常に boolean が返るため、undefined ではなく false に揃える
+  happyHour: false,
+})
+const hasGuestInfo = (s: BlockSession) =>
+  !!s.customerName || !!s.note || !!s.happyHour
+
 export function POSSystem({ storeId }: { storeId: number }) {
   const [activeTab, setActiveTab] = useState<Tab>("map")
   const initializedRef = useRef(false)
@@ -325,7 +337,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
         !s.endedAt,
     )
     if (ghostSession) {
-      const endedGhost = { ...ghostSession, endedAt: now }
+      const endedGhost = stripGuestInfo({ ...ghostSession, endedAt: now })
       setSessions((prev) => prev.map((s) => (s.id === ghostSession.id ? endedGhost : s)))
       upsertSessions([endedGhost], storeId).catch((e) => console.error("[DB]sessions bussing ghost:", e))
     }
@@ -341,7 +353,21 @@ export function POSSystem({ storeId }: { storeId: number }) {
           : b,
       ),
     )
+    // 終了済みセッションからも接客情報を落とす。
+    // endedAt の同期に失敗した場合でも、次の客に顧客名・備考・HH が復活しないようにする。
+    if (endedSession && hasGuestInfo(endedSession)) {
+      const cleaned = stripGuestInfo(endedSession)
+      setSessions((prev) => prev.map((s) => (s.id === cleaned.id ? cleaned : s)))
+      upsertSessions([cleaned], storeId).catch((e) => console.error("[DB]sessions bussing clear:", e))
+    }
+
+    // ローカルキャッシュ（顧客名・ハッピーアワー）も空席化で破棄する
     setCustomerNames((prev) => {
+      const next = { ...prev }
+      allBlockIds.forEach((id) => delete next[id])
+      return next
+    })
+    setHappyHourByBlock((prev) => {
       const next = { ...prev }
       allBlockIds.forEach((id) => delete next[id])
       return next
