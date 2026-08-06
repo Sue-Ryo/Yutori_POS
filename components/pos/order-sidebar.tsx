@@ -12,7 +12,8 @@ import type {
   CheckoutData,
 } from "@/lib/pos-types"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Input, inputVariants } from "@/components/ui/input"
+import { ImeInput, isComposingEvent } from "@/components/ui/ime-input"
 import { Label } from "@/components/ui/label"
 import {
   X,
@@ -110,14 +111,17 @@ export function OrderSidebar({
   const [editingMemoId, setEditingMemoId] = useState<string | null>(null)
   const [showNightChargeWarning, setShowNightChargeWarning] = useState(false)
   const [noteText, setNoteText] = useState<string>(session?.note ?? "")
+  const [editingMemoText, setEditingMemoText] = useState<string>("")
   const [squareState, setSquareState] = useState<"idle" | "processing" | "error">("idle")
   const [squareCheckoutId, setSquareCheckoutId] = useState<string | null>(null)
   const [squareError, setSquareError] = useState<string | null>(null)
   const squarePollActiveRef = useRef(false)
 
+  // 席またはセッションが切り替わったら備考を貼り直す
+  // （selectedBlock を含めないと、セッション未作成の席同士で備考が混ざる）
   useEffect(() => {
     setNoteText(session?.note ?? "")
-  }, [session?.id])
+  }, [session?.id, selectedBlock?.id])
 
   // サイドバーが閉じたらモーダルも閉じる
   useEffect(() => {
@@ -345,6 +349,13 @@ export function OrderSidebar({
     onUpdateSession({ ...session, orderItems: updatedItems })
   }
 
+  // 備考: ローカルに保持しつつ、セッションがあれば保存する。
+  // セッション未作成でも入力は保持され、初回オーダー時に ensureSession が拾う。
+  const handleNoteChange = (next: string) => {
+    setNoteText(next)
+    if (session) onUpdateSession({ ...session, note: next || undefined })
+  }
+
   const handleUpdateMemo = (itemId: string, memo: string) => {
     if (!session) return
     const updatedItems = session.orderItems.map((i) =>
@@ -544,10 +555,13 @@ export function OrderSidebar({
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-bold shrink-0">{selectedBlock.name}</h2>
-              <input
-                type="text"
+              <ImeInput
                 value={customerName}
-                onChange={(e) => onCustomerNameChange(e.target.value)}
+                onValueChange={onCustomerNameChange}
+                enterKeyHint="done"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !isComposingEvent(e)) e.currentTarget.blur()
+                }}
                 placeholder="顧客名"
                 className="min-w-0 flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground/40 outline-none border-b border-border/50 focus:border-primary"
               />
@@ -570,12 +584,12 @@ export function OrderSidebar({
             </div>
             <div className="mt-1.5 flex items-center gap-1.5">
               <FileText className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
-              <input
-                type="text"
+              <ImeInput
                 value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                onBlur={() => {
-                  if (session) onUpdateSession({ ...session, note: noteText || undefined })
+                onValueChange={handleNoteChange}
+                enterKeyHint="done"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !isComposingEvent(e)) e.currentTarget.blur()
                 }}
                 placeholder="備考を追加..."
                 className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground/50 outline-none"
@@ -686,17 +700,21 @@ export function OrderSidebar({
                       )}
                       {editingMemoId === item.id ? (
                         <div className="mt-1 flex gap-1" onClick={(e) => e.stopPropagation()}>
-                          <Input
+                          <ImeInput
                             autoFocus
-                            defaultValue={item.optionMemo ?? ""}
+                            value={editingMemoText}
+                            onValueChange={setEditingMemoText}
+                            commitDelay={0}
                             placeholder="例: 氷少なめ"
-                            className="h-7 text-xs"
+                            enterKeyHint="done"
+                            className={cn(...inputVariants, "h-7 text-xs")}
                             onBlur={(e) => {
-                              handleUpdateMemo(item.id, e.target.value)
+                              handleUpdateMemo(item.id, e.currentTarget.value)
                               setEditingMemoId(null)
                             }}
                             onKeyDown={(e) => {
-                              if (e.key === "Enter") {
+                              // 変換確定の Enter で編集を閉じない
+                              if (e.key === "Enter" && !isComposingEvent(e)) {
                                 handleUpdateMemo(item.id, e.currentTarget.value)
                                 setEditingMemoId(null)
                               }
@@ -708,6 +726,7 @@ export function OrderSidebar({
                           className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
                           onClick={(e) => {
                             e.stopPropagation()
+                            setEditingMemoText(item.optionMemo ?? "")
                             setEditingMemoId(item.id)
                           }}
                         >
