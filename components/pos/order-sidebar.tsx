@@ -47,6 +47,7 @@ import {
   isHhTarget as hhIsTarget,
   calcHhSubtotal,
   resolveCategory,
+  splitRoundGuestCount,
 } from "@/lib/hh-calc"
 
 import {
@@ -371,6 +372,14 @@ export function OrderSidebar({
   }
   const splitSelectedIds = Object.keys(splitQtyById)
   const splitSelectedUnits = Object.values(splitQtyById).reduce((sum, q) => sum + q, 0)
+  const splitRemainingUnits = unpaidItems.reduce(
+    (sum, i) => sum + (i.quantity - (splitQtyById[i.id] ?? 0)),
+    0,
+  )
+  const splitRemainingSubtotal = unpaidItems.reduce(
+    (sum, i) => sum + i.price * (i.quantity - (splitQtyById[i.id] ?? 0)),
+    0,
+  )
 
   // 一部だけ支払う明細は、その数量ぶんの金額で計算する
   const targetItems =
@@ -386,7 +395,15 @@ export function OrderSidebar({
   const isHhTarget = (i: { name: string; productId: string; category?: string }) =>
     hhIsTarget(i, productCategoryMap)
   const hasNightCharge = unpaidItems.some((i) => i.name === NIGHT_CHARGE_NAME)
-  const hhResult = calcHhSubtotal(targetItems, guestCount, productCategoryMap)
+  // 分割会計では、その回が受け持つ人数ぶんだけHHを計算する。
+  // 全回を足すと一括会計と同じ金額になるよう、端数は先の回から1名ずつ多く持たせ、
+  // 残り全部を精算する回でまだ計上していない人数をまとめて引き受ける。
+  const hhGuestCount =
+    splitMode && splitRounds !== null
+      ? splitRoundGuestCount(guestCount, splitRounds, splitRoundIndex, splitRemainingUnits === 0)
+      : guestCount
+
+  const hhResult = calcHhSubtotal(targetItems, hhGuestCount, productCategoryMap)
   const { happyHourCharge, drinkOverage, nonHhSubtotal } = hhResult
 
   const subtotal = happyHour
@@ -593,15 +610,6 @@ export function OrderSidebar({
       return next
     })
   }
-
-  const splitRemainingUnits = unpaidItems.reduce(
-    (sum, i) => sum + (i.quantity - (splitQtyById[i.id] ?? 0)),
-    0,
-  )
-  const splitRemainingSubtotal = unpaidItems.reduce(
-    (sum, i) => sum + i.price * (i.quantity - (splitQtyById[i.id] ?? 0)),
-    0,
-  )
 
   const handleOpenSplitModal = () => {
     // 進行中の分割があればその回から、無ければ回数選択から始める
@@ -1266,8 +1274,8 @@ export function OrderSidebar({
             {happyHour ? (
               <>
                 <div className="flex justify-between text-amber-600 dark:text-amber-400">
-                  <span>HH基本 (¥{HAPPY_HOUR_BASE.toLocaleString()} × {guestCount}名)</span>
-                  <span>¥{(HAPPY_HOUR_BASE * guestCount).toLocaleString()}</span>
+                  <span>HH基本 (¥{HAPPY_HOUR_BASE.toLocaleString()} × {hhGuestCount}名)</span>
+                  <span>¥{(HAPPY_HOUR_BASE * hhGuestCount).toLocaleString()}</span>
                 </div>
                 {drinkOverage > 0 && (
                   <div className="flex justify-between text-muted-foreground">
