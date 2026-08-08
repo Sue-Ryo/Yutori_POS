@@ -115,9 +115,12 @@ function rebuildAnnualSheet(year) {
   var weatherFromApi = fetchWeatherForYear(year)
   var weatherFromSheet = readExistingWeather(sheet)
 
-  // データ行をクリアして再構築
+  // データ行をクリアして再構築。
+  // deleteRows だと「固定行以外を全て削除」になる場合にエラーになるため内容だけ消す
   var lastRow = sheet.getLastRow()
-  if (lastRow > 1) sheet.deleteRows(2, lastRow - 1)
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, sheet.getMaxColumns()).clearContent()
+  }
 
   var allRows = []
 
@@ -154,6 +157,10 @@ function rebuildAnnualSheet(year) {
   })
 
   if (allRows.length === 0) return
+  // 書き込む行数がシートの行数を超えていたら足す（行削除をやめたぶん自前で確保する）
+  var neededRows = allRows.length + 1
+  var maxRows = sheet.getMaxRows()
+  if (maxRows < neededRows) sheet.insertRowsAfter(maxRows, neededRows - maxRows)
   sheet.getRange(2, 1, allRows.length, HEADERS.length).setValues(allRows)
   Logger.log('[rebuild] %s 行を書き込み完了', allRows.length)
 }
@@ -191,6 +198,11 @@ function getOrCreateSheet(ss, title) {
   if (!sheet) {
     sheet = ss.insertSheet(title)
     sheet.setFrozenRows(1)
+  }
+  // 列を増やしたときに既存シートが狭いままだと書き込めないので広げる
+  var maxCols = sheet.getMaxColumns()
+  if (maxCols < HEADERS.length) {
+    sheet.insertColumnsAfter(maxCols, HEADERS.length - maxCols)
   }
   var headerRange = sheet.getRange(1, 1, 1, HEADERS.length)
   headerRange.setValues([HEADERS])
