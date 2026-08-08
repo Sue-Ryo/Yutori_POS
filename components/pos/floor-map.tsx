@@ -89,6 +89,15 @@ export function FloorMap({
       s.linkedBlockIds!.forEach((id) => linkedSecondaryIds.add(id))
     })
 
+  // 新規客が入っている席（プライマリ・連結先どちらにも印を出す）
+  const newCustomerBlockIds = new Set<string>()
+  sessions
+    .filter((s) => s.isNewCustomer && !s.endedAt)
+    .forEach((s) => {
+      newCustomerBlockIds.add(s.blockId)
+      s.linkedBlockIds?.forEach((id) => newCustomerBlockIds.add(id))
+    })
+
   // 連結モード中に選択不可なブロック（会計済・すでに連結サブ席）
   const isUnselectable = (block: ServiceBlock) =>
     block.status === "checked_out" || linkedSecondaryIds.has(block.id)
@@ -234,6 +243,12 @@ export function FloorMap({
             {/* 通常モード: 連結アイコン */}
             {!linkMode && !moveMode && (isLinkedPrimary || isLinkedSecondary) && (
               <Link2 className="absolute right-1 top-1 h-3 w-3 opacity-60" />
+            )}
+            {/* 新規客の目印 */}
+            {!linkMode && !moveMode && newCustomerBlockIds.has(block.id) && (
+              <span className="absolute left-1 top-1 rounded bg-primary px-1 py-0.5 text-[9px] font-bold leading-none text-primary-foreground">
+                新規
+              </span>
             )}
             <span className="text-sm font-bold leading-tight">{block.name}</span>
             <span className="mt-0.5 text-[10px] uppercase tracking-wide opacity-80">

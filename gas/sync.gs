@@ -15,7 +15,7 @@ const DRIVE_FOLDER_ID = PROPS.getProperty('DRIVE_FOLDER_ID')
 const STORE_ID = PROPS.getProperty('STORE_ID') || '1'
 
 const DAYS_JA = ['日', '月', '火', '水', '木', '金', '土']
-const HEADERS = ['日付', '曜日（祝日）', '天気', '来客数', '組数', '売上', '現金', 'キャッシュレス', '割引', '経費', '経費枚数', '利益']
+const HEADERS = ['日付', '曜日（祝日）', '天気', '来客数', '組数', '新規来客数', '新規組数', '売上', '現金', 'キャッシュレス', '割引', '経費', '経費枚数', '利益']
 const WEATHER_COL = 3  // 天気は3列目（1-indexed）
 
 // ── タイマートリガーから呼ばれる ──────────────────────────────────────
@@ -111,6 +111,16 @@ function rebuildAnnualSheet(year) {
     var totalCash     = dayPayments.reduce(function(s, p) { return s + (p.cash_amount     || 0) }, 0)
     var totalCashless = dayPayments.reduce(function(s, p) { return s + (p.cashless_amount || 0) }, 0)
     var totalGuests   = dayPayments.reduce(function(s, p) { return s + (p.guest_count     || 0) }, 0)
+    // 新規客は伝票単位で数える。個別会計で会計が複数回に分かれても1組・1回ぶんの人数にする
+    var newBySession = {}
+    dayPayments.forEach(function(p) {
+      if (!p.is_new_customer) return
+      var sid = p.session_id
+      var guests = p.guest_count || 0
+      if (newBySession[sid] === undefined || newBySession[sid] < guests) newBySession[sid] = guests
+    })
+    var newGroups = Object.keys(newBySession).length
+    var newGuests = Object.keys(newBySession).reduce(function(s, sid) { return s + newBySession[sid] }, 0)
     var totalDiscount = dayPayments.reduce(function(s, p) { return s + (p.discount_amount || 0) }, 0)
     var expenseAmt    = expense ? (expense.amount        || 0) : 0
     var expenseCount  = expense ? (expense.receipt_count || 0) : 0
@@ -125,6 +135,8 @@ function rebuildAnnualSheet(year) {
       weather,
       totalGuests,
       dayPayments.length,
+      newGuests,
+      newGroups,
       totalSales, totalCash, totalCashless,
       totalDiscount,
       expenseAmt, expenseCount, profit

@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   guest_count INTEGER NOT NULL DEFAULT 1,
   note TEXT,
   customer_name TEXT,
-  happy_hour BOOLEAN NOT NULL DEFAULT false
+  happy_hour BOOLEAN NOT NULL DEFAULT false,
+  is_new_customer BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_store ON sessions (store_id);
 
@@ -115,7 +116,8 @@ CREATE TABLE IF NOT EXISTS payments (
   customer_name TEXT,
   session_started_at TIMESTAMPTZ,
   synced_to_sheet_at TIMESTAMPTZ,
-  square_payment_id TEXT
+  square_payment_id TEXT,
+  is_new_customer BOOLEAN NOT NULL DEFAULT false
 );
 CREATE INDEX IF NOT EXISTS idx_payments_store_date ON payments (store_id, business_date);
 CREATE INDEX IF NOT EXISTS idx_payments_unsynced ON payments (store_id)

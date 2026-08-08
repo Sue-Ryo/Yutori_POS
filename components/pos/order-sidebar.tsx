@@ -37,6 +37,7 @@ import {
   Loader2,
   AlertCircle,
   RotateCcw,
+  Sparkles,
 } from "lucide-react"
 
 import {
@@ -75,6 +76,8 @@ interface OrderSidebarProps {
   onHappyHourChange: (value: boolean) => void
   customerName: string
   onCustomerNameChange: (name: string) => void
+  isNewCustomer: boolean
+  onIsNewCustomerChange: (value: boolean) => void
   /** 分割会計の1回分が終わって次の回へ進むときの合図。nonce は回ごとに増える */
   resumeSplit: { sessionId: string; nonce: number } | null
   onResumeSplitHandled: () => void
@@ -99,6 +102,8 @@ export function OrderSidebar({
   onHappyHourChange,
   customerName,
   onCustomerNameChange,
+  isNewCustomer,
+  onIsNewCustomerChange,
   resumeSplit,
   onResumeSplitHandled,
 }: OrderSidebarProps) {
@@ -331,6 +336,7 @@ export function OrderSidebar({
       note: noteText || undefined,
       customerName: customerName || undefined,
       happyHour: happyHour || undefined,
+      isNewCustomer: isNewCustomer || undefined,
     }
   }
 
@@ -539,6 +545,7 @@ export function OrderSidebar({
     // 一部数量だけ支払う明細は、会計時に pos-system 側で支払い分と残り分に分割される
     paidItemQuantities: splitMode && splitSelectedIds.length > 0 ? splitQtyById : undefined,
     customerName: resolvedCustomerName,
+    isNewCustomer,
   })
 
   // Squareアプリへ切り替えて決済する。結果はコールバックURL経由で pos-system 側が
@@ -725,7 +732,8 @@ export function OrderSidebar({
               />
             </div>
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              {session && (
+              {/* 空席の席に前の客の入店時間が残って見えないようにする */}
+              {session && selectedBlock.status !== "empty" && (
                 <span className="flex items-center gap-1">
                   <Clock className="h-3 w-3" />
                   {formatTime(session.startedAt)}〜
@@ -739,6 +747,19 @@ export function OrderSidebar({
                   <span className="rounded bg-info/15 px-1 py-0.5 text-[10px] font-medium text-info">連結</span>
                 )}
               </div>
+              {/* 新規客の目印。オーダー入力中も常に見える位置に置く */}
+              <button
+                onClick={() => onIsNewCustomerChange(!isNewCustomer)}
+                className={cn(
+                  "flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-bold transition-colors",
+                  isNewCustomer
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border text-muted-foreground hover:border-primary/60 hover:text-foreground",
+                )}
+              >
+                <Sparkles className="h-3 w-3" />
+                新規
+              </button>
             </div>
             <div className="mt-1.5 flex items-center gap-1.5">
               <FileText className="h-3 w-3 flex-shrink-0 text-muted-foreground" />
