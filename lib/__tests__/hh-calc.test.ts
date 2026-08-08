@@ -5,6 +5,7 @@ import {
   HAPPY_HOUR_BASE,
   DRINK_CAP_PER_PERSON,
   HH_EXCLUDED_NAMES,
+  splitRoundGuestCount,
   type HhItem,
 } from "../hh-calc"
 
@@ -160,5 +161,66 @@ describe("calcHhSubtotal", () => {
     expect(r.drinkSubtotal).toBe(800)
     expect(r.drinkOverage).toBe(200)
     expect(r.subtotal).toBe(HAPPY_HOUR_BASE + 200)
+  })
+})
+
+describe("splitRoundGuestCount（分割会計のHH人数配分）", () => {
+  // 各回に配分した人数の合計。最終回は残り全部を精算する扱い
+  const distribute = (guestCount: number, rounds: number) =>
+    Array.from({ length: rounds }, (_, i) =>
+      splitRoundGuestCount(guestCount, rounds, i, i === rounds - 1),
+    )
+
+  it("人数が回数で割り切れるときは均等に配る", () => {
+    expect(distribute(3, 3)).toEqual([1, 1, 1])
+    expect(distribute(4, 2)).toEqual([2, 2])
+  })
+
+  it("端数は先の回が1名ずつ多く受け持つ", () => {
+    expect(distribute(5, 3)).toEqual([2, 2, 1])
+    expect(distribute(3, 2)).toEqual([2, 1])
+  })
+
+  it("回数が人数より多くても合計は人数に一致する", () => {
+    expect(distribute(1, 3)).toEqual([1, 0, 0])
+    expect(distribute(2, 5)).toEqual([1, 1, 0, 0, 0])
+  })
+
+  it("どの分割でも合計が全体の人数に一致する", () => {
+    for (let guests = 1; guests <= 8; guests++) {
+      for (let rounds = 1; rounds <= 6; rounds++) {
+        const total = distribute(guests, rounds).reduce((s, n) => s + n, 0)
+        expect(total).toBe(guests)
+      }
+    }
+  })
+
+  it("途中の回で残り全部を精算したら、未計上の人数をまとめて引き受ける", () => {
+    // 3名3分割で1回目を終え、2回目で残り全部を精算 → 2名ぶん
+    expect(splitRoundGuestCount(3, 3, 1, true)).toBe(2)
+  })
+
+  it("分割の合計金額が一括会計と一致する", () => {
+    const guests = 3
+    const rounds = 3
+    // 3名でビール¥600×6杯（1回あたり2杯）+ シーシャ¥3,000
+    const lump = calcHhSubtotal(
+      [item("Shisha", "system", 3000), item("Beer", "alcohol", 600, 6)],
+      guests,
+      CAT,
+    )
+    const splitTotal = Array.from({ length: rounds }, (_, i) =>
+      calcHhSubtotal(
+        // シーシャは1回目の会計に含める
+        i === 0
+          ? [item("Shisha", "system", 3000), item(`Beer${i}`, "alcohol", 600, 2)]
+          : [item(`Beer${i}`, "alcohol", 600, 2)],
+        splitRoundGuestCount(guests, rounds, i, i === rounds - 1),
+        CAT,
+      ).subtotal,
+    ).reduce((s, n) => s + n, 0)
+
+    expect(lump.subtotal).toBe(HAPPY_HOUR_BASE * guests + 1800)
+    expect(splitTotal).toBe(lump.subtotal)
   })
 })
