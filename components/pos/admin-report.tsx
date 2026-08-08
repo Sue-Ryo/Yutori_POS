@@ -48,13 +48,8 @@ import { hashPin, verifyPin } from "@/lib/pin"
 import { fetchStores, updatePinHash } from "@/lib/api/stores-db"
 
 type AdminTab = "daily" | "products" | "coupons" | "settings"
-type Period = "day" | "week" | "month"
-
-const PERIOD_OPTIONS: { id: Period; label: string }[] = [
-  { id: "day", label: "1日" },
-  { id: "week", label: "1週間" },
-  { id: "month", label: "1か月" },
-]
+// today: 本日 / month: 選択中の日付が属する月 / date: 選んだ1日だけ
+type Period = "today" | "month" | "date"
 
 interface AdminReportProps {
   storeId: number
@@ -687,14 +682,18 @@ function EditCouponRow({
 // ── 経費入力カード ────────────────────────────────────────────────────
 function ExpenseCard({
   todayBD,
+  selectedDate,
+  onSelectDate,
   expenses,
   onUpsertExpense,
 }: {
   todayBD: string
+  /** レポートで表示中の営業日。日付はレポート側と共有する */
+  selectedDate: string
+  onSelectDate: (date: string) => void
   expenses: DailyExpense[]
   onUpsertExpense: (expense: DailyExpense) => Promise<void>
 }) {
-  const [selectedDate, setSelectedDate] = useState(todayBD)
   const [receiptCount, setReceiptCount] = useState(0)
   const [amount, setAmount] = useState(0)
   const [handoverNote, setHandoverNote] = useState("")
@@ -733,7 +732,7 @@ function ExpenseCard({
           type="date"
           value={selectedDate}
           max={todayBD}
-          onChange={(e) => setSelectedDate(e.target.value)}
+          onChange={(e) => e.target.value && onSelectDate(e.target.value)}
           className="h-7 rounded-md border border-border bg-background px-2 text-xs"
         />
       </div>
@@ -806,7 +805,9 @@ export function AdminReport({
   onUpsertExpense,
 }: AdminReportProps) {
   const [activeTab, setActiveTab] = useState<AdminTab>("daily")
-  const [period, setPeriod] = useState<Period>("day")
+  const [period, setPeriod] = useState<Period>("today")
+  // 日付指定で見る営業日。月表示の対象月もこの日付から決まる
+  const [selectedBusinessDate, setSelectedBusinessDate] = useState<string>("")
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<{ count: number; error?: string } | null>(null)
 
@@ -838,18 +839,34 @@ export function AdminReport({
 
   const todayBD = getBusinessDate(new Date(), settings.businessDayStartTime)
 
-  const periodStart = (() => {
-    if (period === "day") return todayBD
-    const d = new Date()
-    d.setDate(d.getDate() - (period === "week" ? 6 : 29))
-    return getBusinessDate(d, settings.businessDayStartTime)
-  })()
+  // 初期表示は本日。日付を選ぶまでは今日の営業日を基準にする
+  const focusedDate = selectedBusinessDate || todayBD
+  const monthPrefix = focusedDate.slice(0, 7) // YYYY-MM
+  const monthLabel = `${Number(monthPrefix.slice(5, 7))}月`
 
-  const periodLabel = period === "day" ? "本日" : period === "week" ? "過去7日間" : "過去30日間"
+  // 営業日は YYYY-MM-DD の文字列なので前方一致で月を判定できる
+  const inPeriod = (businessDate: string) =>
+    period === "today"
+      ? businessDate === todayBD
+      : period === "month"
+      ? businessDate.startsWith(monthPrefix)
+      : businessDate === focusedDate
 
-  const periodPayments = payments.filter((p) =>
-    period === "day" ? p.businessDate === todayBD : p.businessDate >= periodStart && p.businessDate <= todayBD
-  )
+  // レポートの期間と経費カードの日付を1つの状態で共有する。
+  // どちらで日付を選んでも、その日の売上と経費が並んで見えるようにする
+  const handleSelectDate = (date: string) => {
+    setSelectedBusinessDate(date)
+    setPeriod("date")
+  }
+
+  const periodLabel =
+    period === "today"
+      ? "本日"
+      : period === "month"
+      ? monthLabel
+      : `${Number(focusedDate.slice(5, 7))}月${Number(focusedDate.slice(8, 10))}日`
+
+  const periodPayments = payments.filter((p) => inPeriod(p.businessDate))
 
   const activePayments = periodPayments.filter((p) => !p.canceledAt)
   const totalSales = activePayments.reduce((sum, p) => sum + p.totalAmount, 0)
@@ -893,11 +910,7 @@ export function AdminReport({
     return labels
   })()
   const periodExpenses = expenses
-    .filter((e) =>
-      period === "day"
-        ? e.businessDate === todayBD
-        : e.businessDate >= periodStart && e.businessDate <= todayBD
-    )
+    .filter((e) => inPeriod(e.businessDate))
     .reduce((sum, e) => sum + e.amount, 0)
   const profit = totalSales - periodExpenses
 
@@ -945,23 +958,45 @@ export function AdminReport({
           {activeTab === "daily" && (
             <>
               {/* 期間切り替え */}
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="text-sm text-muted-foreground">{periodLabel}</span>
-                <div className="flex overflow-hidden rounded-md border border-border">
-                  {PERIOD_OPTIONS.map((opt) => (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex overflow-hidden rounded-md border border-border">
                     <button
-                      key={opt.id}
                       className={cn(
                         "px-3 py-1.5 text-xs font-medium transition-colors",
-                        period === opt.id
+                        period === "today"
                           ? "bg-primary text-primary-foreground"
                           : "text-muted-foreground hover:bg-muted",
                       )}
-                      onClick={() => setPeriod(opt.id)}
+                      // 本日に戻すときは対象月も今月へ戻す
+                      onClick={() => { setSelectedBusinessDate(todayBD); setPeriod("today") }}
                     >
-                      {opt.label}
+                      本日
                     </button>
-                  ))}
+                    <button
+                      className={cn(
+                        "px-3 py-1.5 text-xs font-medium transition-colors",
+                        period === "month"
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:bg-muted",
+                      )}
+                      onClick={() => setPeriod("month")}
+                    >
+                      {monthLabel}
+                    </button>
+                  </div>
+                  {/* 日付を選ぶとその日の売上に切り替わる */}
+                  <input
+                    type="date"
+                    value={focusedDate}
+                    max={todayBD}
+                    onChange={(e) => e.target.value && handleSelectDate(e.target.value)}
+                    className={cn(
+                      "rounded-md border bg-background px-2 py-1.5 text-xs",
+                      period === "date" ? "border-primary text-primary" : "border-border",
+                    )}
+                  />
                 </div>
               </div>
 
@@ -1044,6 +1079,8 @@ export function AdminReport({
                     {/* 経費 */}
                     <ExpenseCard
                       todayBD={todayBD}
+                      selectedDate={focusedDate}
+                      onSelectDate={handleSelectDate}
                       expenses={expenses}
                       onUpsertExpense={onUpsertExpense}
                     />
