@@ -77,6 +77,11 @@ export interface CheckoutData {
   couponId?: string
   guestCount: number
   paidItemIds: string[]
+  /**
+   * 同一商品をまとめた明細のうち、この会計で支払う数量（明細ID → 数量）。
+   * 全数を支払う明細は省略される。一部だけ支払う場合は会計時に明細を分割する。
+   */
+  paidItemQuantities?: Record<string, number>
   customerName?: string
   sessionStartedAt?: Date
   squarePaymentId?: string
