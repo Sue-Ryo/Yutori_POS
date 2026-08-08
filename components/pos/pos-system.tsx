@@ -48,6 +48,7 @@ import {
   clearPendingSquareCheckout,
   startSquarePosPayment,
 } from "@/lib/square-pos-link"
+import { loadSplitPlan, saveSplitPlan, clearSplitPlan } from "@/lib/split-checkout"
 import { LayoutEditor } from "./layout-editor"
 import { AdminReport } from "./admin-report"
 import { Button } from "@/components/ui/button"
@@ -83,13 +84,24 @@ export function POSSystem({ storeId }: { storeId: number }) {
   // DBからの初回読み込みが完了したか（未完了時は sessions がデモ初期値のため判定に使えない）
   const [dbLoaded, setDbLoaded] = useState(false)
   const [dbError, setDbError] = useState<string | null>(null)
-  const dbSyncingRef = useRef(false)
+  // DB / localStorage から取り込んだ配列・オブジェクトそのものに印を付ける。
+  // 印の付いた値が state に入っているうちは外部由来なのでDBへ書き戻さない。
+  // （時間ベースのガードだと、DB読込直後に走るSquare復帰後の会計処理まで握り潰してしまい、
+  //   席ステータス「会計済」がDBへ届かなくなる）
+  const fromStoreRef = useRef(new WeakSet<object>())
+  const markFromStore = useCallback(<T extends object>(value: T): T => {
+    fromStoreRef.current.add(value)
+    return value
+  }, [])
+  // 直近のローカル更新時刻。これより前に開始した fetch の結果は古いので取り込まない
+  const lastLocalWriteRef = useRef(0)
   const paymentsRef = useRef<Payment[]>([])
 
   // Supabase から全データを取得
   const loadAllFromDB = useCallback(async () => {
     setDbLoading(true)
-    dbSyncingRef.current = true
+    // fetch 中にローカル更新（会計など）が入った場合、その結果で上書きしないための基準時刻
+    const loadStartedAt = Date.now()
     let shouldMigratePayments = false
     try {
       const [
@@ -105,9 +117,14 @@ export function POSSystem({ storeId }: { storeId: number }) {
         fetchProducts(storeId).catch((e) => { console.error("[DB]products fetch:", e); return null }),
         fetchExpenses(storeId).catch((e) => { console.error("[DB]expenses fetch:", e); return null }),
       ])
-      if (dbBlocks !== null) setBlocks(dbBlocks)
-      if (dbSessions !== null) setSessions(dbSessions)
-      if (dbPayments !== null) {
+      // fetch 中にローカル更新が入っていたら、席・伝票・会計は古い結果で上書きしない
+      const staleForLocalWrites = lastLocalWriteRef.current >= loadStartedAt
+      if (staleForLocalWrites) {
+        console.log("[POSSystem] 読込中にローカル更新あり → 席/伝票/会計の取り込みをスキップ")
+      }
+      if (dbBlocks !== null && !staleForLocalWrites) setBlocks(markFromStore(dbBlocks))
+      if (dbSessions !== null && !staleForLocalWrites) setSessions(dbSessions)
+      if (dbPayments !== null && !staleForLocalWrites) {
         if (dbPayments.length > 0) {
           // DB にデータあり → DB を正とする
           setPayments(dbPayments)
@@ -116,9 +133,9 @@ export function POSSystem({ storeId }: { storeId: number }) {
           shouldMigratePayments = true
         }
       }
-      if (dbSettings !== null) setSettings(dbSettings)
+      if (dbSettings !== null) setSettings(markFromStore(dbSettings))
       if (dbCoupons !== null) setCoupons(dbCoupons)
-      if (dbElements !== null) setLayoutElements(dbElements)
+      if (dbElements !== null) setLayoutElements(markFromStore(dbElements))
       if (dbProducts !== null) setProducts(dbProducts)
       if (dbExpenses !== null) setExpenses(dbExpenses)
       console.log("[POSSystem] DB読み込み完了")
@@ -128,14 +145,11 @@ export function POSSystem({ storeId }: { storeId: number }) {
     } finally {
       setDbLoading(false)
       setDbLoaded(true)
-      setTimeout(() => {
-        dbSyncingRef.current = false
-        // localStorage にあった会計データを DB へ移行
-        if (shouldMigratePayments && paymentsRef.current.length > 0) {
-          console.log("[DB]payments migrate:", paymentsRef.current.length, "件をDBへ書き込み")
-          upsertPayments(paymentsRef.current, storeId).catch((e) => console.error("[DB]payments migrate:", e))
-        }
-      }, 300)
+      // localStorage にあった会計データを DB へ移行
+      if (shouldMigratePayments && paymentsRef.current.length > 0) {
+        console.log("[DB]payments migrate:", paymentsRef.current.length, "件をDBへ書き込み")
+        upsertPayments(paymentsRef.current, storeId).catch((e) => console.error("[DB]payments migrate:", e))
+      }
     }
   }, [])
 
@@ -156,65 +170,49 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
   // 他端末の変更をリアルタイム受信
   useEffect(() => {
+    // 取得中にローカル更新（会計など）が入った場合、古い結果で上書きしない
+    const isStale = (startedAt: number) => lastLocalWriteRef.current >= startedAt
     const channel = supabase
       .channel("pos_realtime")
       .on("postgres_changes", { event: "*", schema: "public", table: "blocks" }, () => {
+        const startedAt = Date.now()
         fetchBlocks(storeId).then((data) => {
-          dbSyncingRef.current = true
-          setBlocks(data)
-          setTimeout(() => { dbSyncingRef.current = false }, 300)
+          if (isStale(startedAt)) return
+          setBlocks(markFromStore(data))
         }).catch((e) => console.error("[RT]blocks:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "sessions" }, () => {
+        const startedAt = Date.now()
         fetchSessions(storeId).then((data) => {
-          dbSyncingRef.current = true
+          if (isStale(startedAt)) return
           setSessions(data)
-          setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]sessions:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "payments" }, () => {
+        const startedAt = Date.now()
         fetchPayments(storeId).then((data) => {
-          dbSyncingRef.current = true
+          if (isStale(startedAt)) return
           setPayments(data)
-          setTimeout(() => { dbSyncingRef.current = false }, 300)
         }).catch((e) => console.error("[RT]payments:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "layout_elements" }, () => {
-        fetchLayoutElements(storeId).then((data) => {
-          dbSyncingRef.current = true
-          setLayoutElements(data)
-          setTimeout(() => { dbSyncingRef.current = false }, 300)
-        }).catch((e) => console.error("[RT]layout_elements:", e))
+        fetchLayoutElements(storeId)
+          .then((data) => setLayoutElements(markFromStore(data)))
+          .catch((e) => console.error("[RT]layout_elements:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "stores" }, () => {
         fetchSettings(storeId).then((data) => {
-          if (data) {
-            dbSyncingRef.current = true
-            setSettings(data)
-            setTimeout(() => { dbSyncingRef.current = false }, 300)
-          }
+          if (data) setSettings(markFromStore(data))
         }).catch((e) => console.error("[RT]stores:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "coupons" }, () => {
-        fetchCoupons(storeId).then((data) => {
-          dbSyncingRef.current = true
-          setCoupons(data)
-          setTimeout(() => { dbSyncingRef.current = false }, 300)
-        }).catch((e) => console.error("[RT]coupons:", e))
+        fetchCoupons(storeId).then(setCoupons).catch((e) => console.error("[RT]coupons:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
-        fetchProducts(storeId).then((data) => {
-          dbSyncingRef.current = true
-          setProducts(data)
-          setTimeout(() => { dbSyncingRef.current = false }, 300)
-        }).catch((e) => console.error("[RT]products:", e))
+        fetchProducts(storeId).then(setProducts).catch((e) => console.error("[RT]products:", e))
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "daily_expenses" }, () => {
-        fetchExpenses(storeId).then((data) => {
-          dbSyncingRef.current = true
-          setExpenses(data)
-          setTimeout(() => { dbSyncingRef.current = false }, 300)
-        }).catch((e) => console.error("[RT]daily_expenses:", e))
+        fetchExpenses(storeId).then(setExpenses).catch((e) => console.error("[RT]daily_expenses:", e))
       })
       .subscribe()
 
@@ -235,17 +233,18 @@ export function POSSystem({ storeId }: { storeId: number }) {
   useEffect(() => { if (initializedRef.current) saveObject(KEYS.settings, settings) }, [settings])
   useEffect(() => { if (initializedRef.current) saveList(KEYS.coupons, coupons) }, [coupons])
 
-  // 状態変化時に Supabase へ同期（DB読み込み中は除外）
+  // 状態変化時に Supabase へ同期（DB/localStorage から取り込んだ値そのものは書き戻さない）
   useEffect(() => {
-    if (!initializedRef.current || dbSyncingRef.current) return
+    if (!initializedRef.current || fromStoreRef.current.has(blocks)) return
+    lastLocalWriteRef.current = Date.now()
     upsertBlocks(blocks, storeId).catch((e) => console.error("[DB]blocks:", e))
   }, [blocks])
   useEffect(() => {
-    if (!initializedRef.current || dbSyncingRef.current) return
+    if (!initializedRef.current || fromStoreRef.current.has(layoutElements)) return
     upsertLayoutElements(layoutElements, storeId).catch((e) => console.error("[DB]layout:", e))
   }, [layoutElements])
   useEffect(() => {
-    if (!initializedRef.current || dbSyncingRef.current) return
+    if (!initializedRef.current || fromStoreRef.current.has(settings)) return
     upsertSettings(storeId, settings).catch((e) => console.error("[DB]settings:", e))
   }, [settings])
 
@@ -257,11 +256,12 @@ export function POSSystem({ storeId }: { storeId: number }) {
     const savedPayments = loadList(KEYS.payments, revivers.revivePayment)
     const savedSettings = loadObject<BusinessSettings>(KEYS.settings)
     const savedCoupons = loadList(KEYS.coupons, (r) => r as unknown as Coupon)
-    if (savedBlocks !== null) setBlocks(savedBlocks)
-    if (savedElements !== null) setLayoutElements(savedElements)
+    // 復元値はDBから読んだ値と同じく「外部由来」なのでDBへ書き戻さない
+    if (savedBlocks !== null) setBlocks(markFromStore(savedBlocks))
+    if (savedElements !== null) setLayoutElements(markFromStore(savedElements))
     if (savedSessions !== null) setSessions(savedSessions)
     if (savedPayments !== null) setPayments(savedPayments)
-    if (savedSettings !== null) setSettings(savedSettings)
+    if (savedSettings !== null) setSettings(markFromStore(savedSettings))
     if (savedCoupons !== null) setCoupons(savedCoupons)
     initializedRef.current = true
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -277,6 +277,9 @@ export function POSSystem({ storeId }: { storeId: number }) {
   const [moveMode, setMoveMode] = useState(false)
   const [moveSource, setMoveSource] = useState<string | null>(null)
   const [moveDest, setMoveDest] = useState<string | null>(null)
+  // 分割会計の1回分が終わったときの合図。nonce を増やして次の回のモーダルを開かせる
+  const [resumeSplit, setResumeSplit] = useState<{ sessionId: string; nonce: number } | null>(null)
+  const handleResumeSplitHandled = useCallback(() => setResumeSplit(null), [])
 
   const selectedBlock = selectedBlockId ? blocks.find((b) => b.id === selectedBlockId) ?? null : null
   const currentSession = selectedBlockId
@@ -341,10 +344,12 @@ export function POSSystem({ storeId }: { storeId: number }) {
       setSessions((prev) => prev.map((s) => (s.id === ghostSession.id ? endedGhost : s)))
       upsertSessions([endedGhost], storeId).catch((e) => console.error("[DB]sessions bussing ghost:", e))
     }
-    const allBlockIds = endedSession
-      ? [endedSession.blockId, ...(endedSession.linkedBlockIds ?? [])]
-      : ghostSession
+    // 現在の連結構成はアクティブなセッションが持つため、あればそちらを優先する。
+    // （終了済みセッションは前の組の連結情報なので、別の組を巻き込んで空席化しかねない）
+    const allBlockIds = ghostSession
       ? [ghostSession.blockId, ...(ghostSession.linkedBlockIds ?? [])]
+      : endedSession
+      ? [endedSession.blockId, ...(endedSession.linkedBlockIds ?? [])]
       : [blockId]
     setBlocks((prev) =>
       prev.map((b) =>
@@ -360,6 +365,10 @@ export function POSSystem({ storeId }: { storeId: number }) {
       setSessions((prev) => prev.map((s) => (s.id === cleaned.id ? cleaned : s)))
       upsertSessions([cleaned], storeId).catch((e) => console.error("[DB]sessions bussing clear:", e))
     }
+
+    // 空席化した席の分割会計は途中でも無効になるため進捗を捨てる
+    const plan = loadSplitPlan(storeId)
+    if (plan && allBlockIds.includes(plan.blockId)) clearSplitPlan(storeId)
 
     // ローカルキャッシュ（顧客名・ハッピーアワー）も空席化で破棄する
     setCustomerNames((prev) => {
@@ -397,7 +406,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
         }
         return [...prev, sessionWithCache]
       })
-      // useEffect の dbSyncingRef ガードに依存せず直接同期
+      // sessions は書き戻し用の useEffect を持たないため直接同期する
+      lastLocalWriteRef.current = Date.now()
       upsertSessions([sessionWithCache], storeId).catch((e) => console.error("[DB]sessions update:", e))
 
       const unpaidItems = updatedSession.orderItems.filter((i) => !i.isPaid)
@@ -452,6 +462,9 @@ export function POSSystem({ storeId }: { storeId: number }) {
         sessionStartedAt: session.startedAt,
         squarePaymentId: data.squarePaymentId,
       }
+      // Square復帰直後はDB再読込と競合しうるため、ローカル更新時刻を先に記録して
+      // 古い fetch 結果が会計後の状態を上書きしないようにする
+      lastLocalWriteRef.current = Date.now()
       setPayments((prev) => [newPayment, ...prev])
       upsertPayments([newPayment], storeId).catch((e) => console.error("[DB]payments checkout:", e))
 
@@ -469,25 +482,43 @@ export function POSSystem({ storeId }: { storeId: number }) {
         endedAt: allPaid ? now : undefined,
       }
       setSessions((prev) => prev.map((s) => (s.id === sessionId ? updatedSession : s)))
-      // useEffect の dbSyncingRef ガードに依存せず直接同期（endedAt 欠落防止）
+      // sessions は書き戻し用の useEffect を持たないため直接同期する（endedAt 欠落防止）
       upsertSessions([updatedSession], storeId).catch((e) => console.error("[DB]sessions checkout:", e))
 
       // プライマリ + 連結ブロック全て更新
       const allBlockIds = [session.blockId, ...(session.linkedBlockIds ?? [])]
+      // 一部会計済みの場合はステータス再計算
+      const remaining = updatedItems.filter((i) => !i.isPaid)
       setBlocks((prev) =>
         prev.map((b) => {
           if (!allBlockIds.includes(b.id)) return b
           if (allPaid) {
             return { ...b, status: "checked_out", checkedOutAt: now }
           }
-          // 一部会計済みの場合はステータス再計算
-          const remaining = updatedItems.filter((i) => !i.isPaid)
-          const hasUnserved = remaining.some((i) => i.servingStatus === "unserved")
           return { ...b, status: remaining.length > 0 ? "occupied" : "empty" }
         })
       )
 
-      handleCloseSidebar()
+      // 分割会計（個別会計）の進捗を進める。
+      // Square 経由だと1回ごとにページが再読込されるため、進捗は localStorage 側が持つ。
+      const plan = loadSplitPlan(storeId)
+      const continuesSplit = !!plan && plan.sessionId === sessionId && !allPaid
+      if (plan && plan.sessionId === sessionId) {
+        if (continuesSplit) {
+          saveSplitPlan(storeId, { ...plan, completedRounds: plan.completedRounds + 1 })
+        } else {
+          clearSplitPlan(storeId)
+        }
+      }
+
+      if (continuesSplit) {
+        // 次の回をすぐ続けられるよう、伝票を開いたままにして合図を送る
+        setSelectedBlockId(session.blockId)
+        setSidebarOpen(true)
+        setResumeSplit((prev) => ({ sessionId, nonce: (prev?.nonce ?? 0) + 1 }))
+      } else {
+        handleCloseSidebar()
+      }
     },
     [sessions, settings.businessDayStartTime, handleCloseSidebar]
   )
@@ -1169,6 +1200,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
         onHappyHourChange={handleHappyHourChange}
         customerName={currentCustomerName}
         onCustomerNameChange={handleCustomerNameChange}
+        resumeSplit={resumeSplit}
+        onResumeSplitHandled={handleResumeSplitHandled}
       />
 
       {sidebarOpen && activeTab === "map" && (
