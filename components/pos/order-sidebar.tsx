@@ -58,6 +58,9 @@ import {
 } from "@/lib/square-pos-link"
 import { loadSplitPlan, saveSplitPlan, clearSplitPlan } from "@/lib/split-checkout"
 
+/** 1品無料クーポンの減額上限。これを超える商品は上限まで、下回る商品は商品金額まで引く */
+const FREE_DRINK_MAX_DISCOUNT = 900
+
 // 明細を数量単位で選ぶリスト。個別会計と連結解除の両方で使う
 function OrderItemSelectList({
   items,
@@ -439,19 +442,17 @@ export function OrderSidebar({
     if (selectedCoupon?.discountType !== "free_drink") return null
     const drinkItems = unpaidItems.filter((i) => ["alcohol", "softdrink"].includes(getItemCategory(i) ?? ""))
     if (drinkItems.length === 0) return null
-    if (drinkItems.length === 1) return drinkItems[0]
-    // 2つ以上: 900円以下で最高額のドリンクを1つ無料
-    const candidates = drinkItems.filter((i) => i.price <= 900).sort((a, b) => b.price - a.price)
-    return candidates[0] ?? null
+    // 最高額のドリンクを1つ対象にする。上限超過分は FREE_DRINK_MAX_DISCOUNT で頭打ち
+    return drinkItems.reduce((max, i) => (i.price > max.price ? i : max))
   })()
+  // 例: 1200円 → −900円（300円を計上）／700円 → −700円
+  const freeDrinkDiscount = freeDrinkItem ? Math.min(freeDrinkItem.price, FREE_DRINK_MAX_DISCOUNT) : 0
   const discountAmount = selectedCoupon
     ? selectedCoupon.discountType === "fixed"
       ? Math.min(selectedCoupon.discountValue, subtotal)
       : selectedCoupon.discountType === "percent"
       ? Math.round((subtotal * selectedCoupon.discountValue) / 100)
-      : freeDrinkItem
-      ? Math.min(freeDrinkItem.price, subtotal)
-      : 0
+      : Math.min(freeDrinkDiscount, subtotal)
     : 0
 
   const taxBase = subtotal - discountAmount
@@ -1284,7 +1285,11 @@ export function OrderSidebar({
               <span className="text-xs">
                 {freeDrinkItem ? (
                   <span className="text-warning font-medium">
-                    無料: {freeDrinkItem.name} (−¥{freeDrinkItem.price.toLocaleString()})
+                    無料: {freeDrinkItem.name} (−¥{freeDrinkDiscount.toLocaleString()}
+                    {freeDrinkItem.price > FREE_DRINK_MAX_DISCOUNT
+                      ? ` / ¥${FREE_DRINK_MAX_DISCOUNT.toLocaleString()}上限`
+                      : ""}
+                    )
                   </span>
                 ) : (
                   <span className="text-muted-foreground">ドリンクの注文がありません</span>
