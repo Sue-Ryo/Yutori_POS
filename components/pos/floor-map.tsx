@@ -20,8 +20,9 @@ interface FloorMapProps {
   onConfirmLink: () => void
   onCancelLinkMode: () => void
   moveMode: boolean
-  moveSource: string | null
-  moveDest: string | null
+  /** 移動元の席。連結中ならグループ全席が入る */
+  moveSourceBlockIds: string[]
+  moveDests: string[]
   onEnterMoveMode: () => void
   onMoveBlockSelect: (blockId: string) => void
   onConfirmMove: () => void
@@ -57,8 +58,8 @@ export function FloorMap({
   onConfirmLink,
   onCancelLinkMode,
   moveMode,
-  moveSource,
-  moveDest,
+  moveSourceBlockIds,
+  moveDests,
   onEnterMoveMode,
   onMoveBlockSelect,
   onConfirmMove,
@@ -104,17 +105,15 @@ export function FloorMap({
 
   // 席移動モード中の選択可否
   const isMoveUnselectable = (block: ServiceBlock): boolean => {
-    if (moveSource === null) {
-      // ステップ1: 移動元 → 使用中かつ連結なしのみ
-      return (
-        block.status === "empty" ||
-        block.status === "checked_out" ||
-        linkedSecondaryIds.has(block.id) ||
-        primaryWithLinkIds.has(block.id)
-      )
+    if (moveSourceBlockIds.length === 0) {
+      // ステップ1: 移動元 → 使用中のみ（連結席はグループごと移動できる）
+      return block.status !== "occupied"
     }
-    // ステップ2: 移動先 → 空席のみ（移動元自身を除く）
-    return block.status !== "empty" || block.id === moveSource
+    // 移動元グループは再タップで解除できるよう選択可のままにする
+    if (moveSourceBlockIds.includes(block.id)) return false
+    // ステップ2: 移動先 → 空席のみ。必要席数に達したら未選択の席は選べない
+    if (block.status !== "empty") return true
+    return !moveDests.includes(block.id) && moveDests.length >= moveSourceBlockIds.length
   }
 
   return (
@@ -163,8 +162,8 @@ export function FloorMap({
         const isLinkSelected = linkSelection.includes(block.id)
         const linkUnselectable = linkMode && isUnselectable(block)
         const moveUnselectable = moveMode && isMoveUnselectable(block)
-        const isMoveSource = moveMode && block.id === moveSource
-        const isMoveDest = moveMode && block.id === moveDest
+        const isMoveSource = moveMode && moveSourceBlockIds.includes(block.id)
+        const isMoveDest = moveMode && moveDests.includes(block.id)
 
         const handleClick = linkMode
           ? () => { if (!linkUnselectable) onToggleLinkSelection(block.id) }
@@ -238,7 +237,9 @@ export function FloorMap({
               <span className="absolute right-1 top-1 text-[9px] font-bold text-amber-500">移動元</span>
             )}
             {isMoveDest && (
-              <span className="absolute right-1 top-1 text-[9px] font-bold text-teal-500">移動先</span>
+              <span className="absolute right-1 top-1 text-[9px] font-bold text-teal-500">
+                移動先{moveSourceBlockIds.length > 1 ? moveDests.indexOf(block.id) + 1 : ""}
+              </span>
             )}
             {/* 通常モード: 連結アイコン */}
             {!linkMode && !moveMode && (isLinkedPrimary || isLinkedSecondary) && (

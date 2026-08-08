@@ -280,10 +280,23 @@ export function POSSystem({ storeId }: { storeId: number }) {
   const [linkSelection, setLinkSelection] = useState<string[]>([])
   const [moveMode, setMoveMode] = useState(false)
   const [moveSource, setMoveSource] = useState<string | null>(null)
-  const [moveDest, setMoveDest] = useState<string | null>(null)
+  // 連結席はグループ全体を移すため、移動先は席数ぶん選ぶ
+  const [moveDests, setMoveDests] = useState<string[]>([])
   // 分割会計の1回分が終わったときの合図。nonce を増やして次の回のモーダルを開かせる
   const [resumeSplit, setResumeSplit] = useState<{ sessionId: string; nonce: number } | null>(null)
   const handleResumeSplitHandled = useCallback(() => setResumeSplit(null), [])
+
+  // 移動元の席。連結中の席を選んだ場合はグループ全体（プライマリ + 連結先）が対象になる
+  const moveSourceSession = moveSource
+    ? sessions.find(
+        (s) => !s.endedAt && (s.blockId === moveSource || (s.linkedBlockIds ?? []).includes(moveSource)),
+      ) ?? null
+    : null
+  const moveSourceBlockIds = moveSourceSession
+    ? [moveSourceSession.blockId, ...(moveSourceSession.linkedBlockIds ?? [])]
+    : moveSource
+    ? [moveSource]
+    : []
 
   const selectedBlock = selectedBlockId ? blocks.find((b) => b.id === selectedBlockId) ?? null : null
   const currentSession = selectedBlockId
@@ -901,23 +914,59 @@ export function POSSystem({ storeId }: { storeId: number }) {
     setLinkSelection([])
   }, [linkSelection, sessions, blocks])
 
-  const handleUnlinkBlock = useCallback((sessionId: string, blockIdToUnlink: string) => {
+  const handleUnlinkBlock = useCallback((
+    sessionId: string,
+    blockIdToUnlink: string,
+    itemQuantities: Record<string, number>,
+  ) => {
     const target = sessions.find((s) => s.id === sessionId)
     if (!target) return
 
-    // originBlockId で分離できるアイテム（連結時に正しくマージされたもの）
-    const splitItems = target.orderItems.filter((i) => i.originBlockId === blockIdToUnlink)
-    const remainingItems = target.orderItems.filter((i) => i.originBlockId !== blockIdToUnlink)
+    // 解除する席へ移すオーダーはサイドバーで数量ごとに選ばれている。
+    // 会計済みの明細は payments と紐付いているため元の伝票に残す。
+    const splitItems: OrderItem[] = []
+    const remainingItems: OrderItem[] = []
+    target.orderItems.forEach((i) => {
+      const moveQty = i.isPaid ? 0 : Math.min(itemQuantities[i.id] ?? 0, i.quantity)
+      if (moveQty <= 0) {
+        remainingItems.push(i)
+        return
+      }
+      if (moveQty >= i.quantity) {
+        splitItems.push(i)
+        return
+      }
+      // 数量の一部だけ移す場合は明細を分割する
+      splitItems.push({
+        ...i,
+        id: `i-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        quantity: moveQty,
+        subtotal: i.price * moveQty,
+      })
+      remainingItems.push({
+        ...i,
+        quantity: i.quantity - moveQty,
+        subtotal: i.price * (i.quantity - moveQty),
+      })
+    })
 
     // 連結時に合算されなかった場合に残っている可能性のある既存セッション
     const existingSecondarySession = sessions.find(
       (s) => s.blockId === blockIdToUnlink && !s.endedAt && s.id !== sessionId
     )
 
+    const now = new Date()
     const linkedBlockIds = (target.linkedBlockIds ?? []).filter((id) => id !== blockIdToUnlink)
     const newLinkedBlockIds = linkedBlockIds.length > 0 ? linkedBlockIds : undefined
     const guestCount = newLinkedBlockIds ? 1 + newLinkedBlockIds.length : 1
-    const updatedSession = { ...target, linkedBlockIds: newLinkedBlockIds, guestCount, orderItems: remainingItems }
+    const remainingSession = { ...target, linkedBlockIds: newLinkedBlockIds, guestCount, orderItems: remainingItems }
+
+    // オーダーを全て解除先へ移した場合、元の伝票は空になるので来店終了として扱う。
+    // 残しておくと使用中のまま席が固まり、入店時間や顧客名も次の客に引き継がれてしまう。
+    const primaryHasUnpaid = remainingItems.some((i) => !i.isPaid)
+    const updatedSession = primaryHasUnpaid
+      ? remainingSession
+      : stripGuestInfo({ ...remainingSession, endedAt: remainingSession.endedAt ?? now })
 
     const sessionsToUpsert: BlockSession[] = [updatedSession]
 
@@ -940,6 +989,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
       setSessions((prev) => prev.map((s) => (s.id === sessionId ? updatedSession : s)))
     }
 
+    lastLocalWriteRef.current = Date.now()
     upsertSessions(sessionsToUpsert, storeId).catch((e) => console.error("[DB]sessions unlink:", e))
 
     // ステータス決定: 分離アイテムか既存セッションのいずれかに未払いアイテムがあれば occupied
@@ -949,13 +999,33 @@ export function POSSystem({ storeId }: { storeId: number }) {
     const startedAt = hasUnpaidItems
       ? (existingSecondarySession?.startedAt ?? target.startedAt)
       : undefined
+    // 元の伝票側（プライマリ + 残った連結席）も空になったら空席に戻す
+    const remainingBlockIds = [target.blockId, ...(newLinkedBlockIds ?? [])]
     setBlocks((prev) =>
-      prev.map((b) =>
-        b.id === blockIdToUnlink
-          ? { ...b, status: hasUnpaidItems ? "occupied" : "empty", startedAt }
-          : b
-      )
+      prev.map((b) => {
+        if (b.id === blockIdToUnlink) {
+          return hasUnpaidItems
+            ? { ...b, status: "occupied", startedAt }
+            : { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
+        }
+        if (!primaryHasUnpaid && remainingBlockIds.includes(b.id)) {
+          return { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
+        }
+        return b
+      })
     )
+
+    // 元の席が空席になったら接客情報のローカルキャッシュも破棄する
+    if (!primaryHasUnpaid) {
+      const clearCache = <T,>(prev: Record<string, T>): Record<string, T> => {
+        const next = { ...prev }
+        remainingBlockIds.forEach((id) => delete next[id])
+        return next
+      }
+      setCustomerNames(clearCache)
+      setHappyHourByBlock(clearCache)
+      setNewCustomerByBlock(clearCache)
+    }
   }, [sessions])
 
   // ── 席移動モード ──────────────────────────────────────────────────────
@@ -963,7 +1033,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
   const handleEnterMoveMode = useCallback(() => {
     setMoveMode(true)
     setMoveSource(null)
-    setMoveDest(null)
+    setMoveDests([])
     setLinkMode(false)
     setLinkSelection([])
     setSidebarOpen(false)
@@ -973,68 +1043,97 @@ export function POSSystem({ storeId }: { storeId: number }) {
   const handleCancelMoveMode = useCallback(() => {
     setMoveMode(false)
     setMoveSource(null)
-    setMoveDest(null)
+    setMoveDests([])
   }, [])
 
   const handleMoveBlockSelect = useCallback((blockId: string) => {
-    setMoveSource((src) => {
-      if (src === null) return blockId        // ステップ1: 移動元を選択
-      if (src === blockId) {                  // 移動元を再タップ → 解除
-        setMoveDest(null)
-        return null
-      }
-      setMoveDest((dst) => dst === blockId ? null : blockId)  // ステップ2: 移動先をトグル
-      return src
+    // ステップ1: 移動元を選択（連結席ならグループ全体が移動元になる）
+    if (moveSource === null) {
+      setMoveSource(blockId)
+      setMoveDests([])
+      return
+    }
+    // 移動元グループのどれかを再タップ → 選択を解除
+    if (moveSourceBlockIds.includes(blockId)) {
+      setMoveSource(null)
+      setMoveDests([])
+      return
+    }
+    // ステップ2: 移動先をトグル。必要席数に達したらそれ以上は選べない
+    setMoveDests((prev) => {
+      if (prev.includes(blockId)) return prev.filter((id) => id !== blockId)
+      if (prev.length >= moveSourceBlockIds.length) return prev
+      return [...prev, blockId]
     })
-  }, [])
+  }, [moveSource, moveSourceBlockIds])
 
   const handleConfirmMove = useCallback(() => {
-    if (!moveSource || !moveDest) return
+    if (!moveSourceSession) return
+    // 連結席は席数が一致していないと移せない
+    if (moveDests.length !== moveSourceBlockIds.length) return
 
-    const sourceSession = sessions.find((s) => s.blockId === moveSource && !s.endedAt)
-    if (!sourceSession) return
+    const oldPrimary = moveSourceSession.blockId
+    const primarySourceBlock = blocks.find((b) => b.id === oldPrimary)
+    const [newPrimary, ...newSecondaries] = moveDests
 
-    const sourceBlock = blocks.find((b) => b.id === moveSource)
+    // 移動元→移動先の対応表。連結解除時の分割に使う originBlockId も付け替える
+    const blockIdMap: Record<string, string> = {}
+    moveSourceBlockIds.forEach((oldId, i) => { blockIdMap[oldId] = moveDests[i] })
 
-    // セッションの blockId を移動先に変更
-    const movedSession = { ...sourceSession, blockId: moveDest }
-    setSessions((prev) =>
-      prev.map((s) => s.id === sourceSession.id ? movedSession : s)
-    )
+    const movedSession: BlockSession = {
+      ...moveSourceSession,
+      blockId: newPrimary,
+      linkedBlockIds: newSecondaries.length > 0 ? newSecondaries : undefined,
+      orderItems: moveSourceSession.orderItems.map((i) =>
+        i.originBlockId && blockIdMap[i.originBlockId]
+          ? { ...i, originBlockId: blockIdMap[i.originBlockId] }
+          : i,
+      ),
+    }
+    setSessions((prev) => prev.map((s) => (s.id === movedSession.id ? movedSession : s)))
+    lastLocalWriteRef.current = Date.now()
     upsertSessions([movedSession], storeId).catch((e) => console.error("[DB]sessions move:", e))
 
-    // ブロックのステータスを付け替え（checkedOutAt も含めて完全転送）
+    // ブロックのステータスを付け替え（checkedOutAt も含めて完全転送）。
+    // 連結席は全席が同じステータス・入店時間を共有するのでプライマリの値を配る
     setBlocks((prev) =>
       prev.map((b) => {
-        if (b.id === moveSource) return { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
-        if (b.id === moveDest) return { ...b, status: sourceBlock?.status ?? "occupied", startedAt: sourceBlock?.startedAt, checkedOutAt: sourceBlock?.checkedOutAt }
+        if (moveSourceBlockIds.includes(b.id)) {
+          return { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
+        }
+        if (moveDests.includes(b.id)) {
+          return {
+            ...b,
+            status: primarySourceBlock?.status ?? "occupied",
+            startedAt: primarySourceBlock?.startedAt,
+            checkedOutAt: primarySourceBlock?.checkedOutAt,
+          }
+        }
         return b
       })
     )
 
+    // 分割会計の進捗が残っていれば移動先の席に付け替える
+    const plan = loadSplitPlan(storeId)
+    if (plan && plan.sessionId === movedSession.id) {
+      saveSplitPlan(storeId, { ...plan, blockId: newPrimary })
+    }
+
     // ローカルキャッシュ（顧客名・ハッピーアワー・新規客）を移動元から移動先へ転送し、移動元は完全クリア
-    setCustomerNames((prev) => {
+    const transferCache = <T,>(prev: Record<string, T>): Record<string, T> => {
       const next = { ...prev }
-      if (next[moveSource]) next[moveDest] = next[moveSource]
-      delete next[moveSource]
+      if (next[oldPrimary] !== undefined) next[newPrimary] = next[oldPrimary]
+      moveSourceBlockIds.forEach((id) => delete next[id])
       return next
-    })
-    setHappyHourByBlock((prev) => {
-      const next = { ...prev }
-      if (next[moveSource] !== undefined) next[moveDest] = next[moveSource]
-      delete next[moveSource]
-      return next
-    })
-    setNewCustomerByBlock((prev) => {
-      const next = { ...prev }
-      if (next[moveSource] !== undefined) next[moveDest] = next[moveSource]
-      delete next[moveSource]
-      return next
-    })
+    }
+    setCustomerNames(transferCache)
+    setHappyHourByBlock(transferCache)
+    setNewCustomerByBlock(transferCache)
+
     setMoveMode(false)
     setMoveSource(null)
-    setMoveDest(null)
-  }, [moveSource, moveDest, sessions, blocks])
+    setMoveDests([])
+  }, [moveSourceSession, moveSourceBlockIds, moveDests, blocks])
 
   const handleSaveLayout = useCallback(
     (newBlocks: ServiceBlock[], newElements: LayoutElement[]) => {
@@ -1183,10 +1282,21 @@ export function POSSystem({ storeId }: { storeId: number }) {
             <div className="flex flex-wrap items-center gap-2">
               <ArrowRightLeft className="h-4 w-4 shrink-0 text-amber-500" />
               <span className="text-sm font-medium text-amber-600">
-                {moveSource === null ? "移動元の席をタップ" : "移動先の空席をタップ"}
+                {moveSource === null
+                  ? "移動元の席をタップ（連結席はグループごと移動）"
+                  : moveSourceBlockIds.length > 1
+                  ? `移動先の空席を${moveSourceBlockIds.length}席タップ（${moveDests.length}/${moveSourceBlockIds.length}）`
+                  : "移動先の空席をタップ"}
               </span>
-              {moveSource && moveDest && (
-                <Button size="sm" className="ml-auto bg-success text-primary-foreground hover:bg-success/90 sm:ml-1" onClick={handleConfirmMove}>移動する</Button>
+              {moveSource && (
+                <Button
+                  size="sm"
+                  className="ml-auto bg-success text-primary-foreground hover:bg-success/90 sm:ml-1"
+                  disabled={!moveSourceSession || moveDests.length !== moveSourceBlockIds.length}
+                  onClick={handleConfirmMove}
+                >
+                  移動する
+                </Button>
               )}
               <Button size="sm" variant="ghost" onClick={handleCancelMoveMode}>キャンセル</Button>
             </div>
@@ -1245,8 +1355,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
             onConfirmLink={handleConfirmLink}
             onCancelLinkMode={handleCancelLinkMode}
             moveMode={moveMode}
-            moveSource={moveSource}
-            moveDest={moveDest}
+            moveSourceBlockIds={moveSourceBlockIds}
+            moveDests={moveDests}
             onEnterMoveMode={handleEnterMoveMode}
             onMoveBlockSelect={handleMoveBlockSelect}
             onConfirmMove={handleConfirmMove}
