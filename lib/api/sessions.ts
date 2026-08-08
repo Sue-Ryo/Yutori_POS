@@ -21,6 +21,7 @@ export function rowToSession(row: Record<string, unknown>): BlockSession {
     note: (row.note as string | null) ?? undefined,
     customerName: (row.customer_name as string | null) ?? undefined,
     happyHour: (row.happy_hour as boolean | null) ?? false,
+    isNewCustomer: (row.is_new_customer as boolean | null) ?? false,
   }
 }
 
@@ -41,6 +42,7 @@ function sessionToRow(session: BlockSession, storeId: number): Record<string, un
     note: session.note ?? null,
     customer_name: session.customerName ?? null,
     happy_hour: session.happyHour ?? false,
+    is_new_customer: session.isNewCustomer ?? false,
     store_id: storeId,
   }
 }

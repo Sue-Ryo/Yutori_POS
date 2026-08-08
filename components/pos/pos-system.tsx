@@ -63,11 +63,13 @@ const stripGuestInfo = (s: BlockSession): BlockSession => ({
   ...s,
   customerName: undefined,
   note: undefined,
-  // happy_hour は NOT NULL 相当で常に boolean が返るため、undefined ではなく false に揃える
+  // happy_hour / is_new_customer は NOT NULL 相当で常に boolean が返るため、
+  // undefined ではなく false に揃える
   happyHour: false,
+  isNewCustomer: false,
 })
 const hasGuestInfo = (s: BlockSession) =>
-  !!s.customerName || !!s.note || !!s.happyHour
+  !!s.customerName || !!s.note || !!s.happyHour || !!s.isNewCustomer
 
 export function POSSystem({ storeId }: { storeId: number }) {
   const [activeTab, setActiveTab] = useState<Tab>("map")
@@ -272,6 +274,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   // セッション未作成時のローカルキャッシュ（初回オーダー時にセッションへ統合）
   const [happyHourByBlock, setHappyHourByBlock] = useState<Record<string, boolean>>({})
+  const [newCustomerByBlock, setNewCustomerByBlock] = useState<Record<string, boolean>>({})
   const [customerNames, setCustomerNames] = useState<Record<string, string>>({})
   const [linkMode, setLinkMode] = useState(false)
   const [linkSelection, setLinkSelection] = useState<string[]>([])
@@ -299,6 +302,18 @@ export function POSSystem({ storeId }: { storeId: number }) {
     }
   }, [selectedBlockId, currentSession])
 
+  const currentIsNewCustomer = currentSession?.isNewCustomer ?? (selectedBlockId ? (newCustomerByBlock[selectedBlockId] ?? false) : false)
+  const handleIsNewCustomerChange = useCallback((value: boolean) => {
+    if (!selectedBlockId) return
+    setNewCustomerByBlock((prev) => ({ ...prev, [selectedBlockId]: value }))
+    if (currentSession) {
+      const updated = { ...currentSession, isNewCustomer: value }
+      setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+      lastLocalWriteRef.current = Date.now()
+      upsertSessions([updated], storeId).catch((e) => console.error("[DB]sessions newCustomer:", e))
+    }
+  }, [selectedBlockId, currentSession])
+
   const currentCustomerName = currentSession?.customerName ?? (selectedBlockId ? (customerNames[selectedBlockId] ?? "") : "")
   const handleCustomerNameChange = useCallback((name: string) => {
     if (!selectedBlockId) return
@@ -315,9 +330,39 @@ export function POSSystem({ storeId }: { storeId: number }) {
     const ownerSession = sessions.find(
       (s) => !s.endedAt && (s.linkedBlockIds ?? []).includes(blockId)
     )
-    setSelectedBlockId(ownerSession ? ownerSession.blockId : blockId)
+    const targetBlockId = ownerSession ? ownerSession.blockId : blockId
+
+    // 空席なのに終了していないセッションが残っていると、入店時間や顧客名が
+    // 次の客に引き継がれてしまう。開いた時点で終了させて掃除する
+    const target = blocks.find((b) => b.id === targetBlockId)
+    const ghostSession = sessions.find(
+      (s) => !s.endedAt && s.blockId === targetBlockId,
+    )
+    if (target?.status === "empty" && ghostSession) {
+      const endedGhost = stripGuestInfo({ ...ghostSession, endedAt: new Date() })
+      setSessions((prev) => prev.map((s) => (s.id === endedGhost.id ? endedGhost : s)))
+      lastLocalWriteRef.current = Date.now()
+      upsertSessions([endedGhost], storeId).catch((e) => console.error("[DB]sessions ghost clear:", e))
+      setCustomerNames((prev) => {
+        const next = { ...prev }
+        delete next[targetBlockId]
+        return next
+      })
+      setHappyHourByBlock((prev) => {
+        const next = { ...prev }
+        delete next[targetBlockId]
+        return next
+      })
+      setNewCustomerByBlock((prev) => {
+        const next = { ...prev }
+        delete next[targetBlockId]
+        return next
+      })
+    }
+
+    setSelectedBlockId(targetBlockId)
     setSidebarOpen(true)
-  }, [sessions])
+  }, [sessions, blocks])
 
   const handleCloseSidebar = useCallback(() => {
     setSidebarOpen(false)
@@ -371,13 +416,18 @@ export function POSSystem({ storeId }: { storeId: number }) {
     const plan = loadSplitPlan(storeId)
     if (plan && allBlockIds.includes(plan.blockId)) clearSplitPlan(storeId)
 
-    // ローカルキャッシュ（顧客名・ハッピーアワー）も空席化で破棄する
+    // ローカルキャッシュ（顧客名・ハッピーアワー・新規客）も空席化で破棄する
     setCustomerNames((prev) => {
       const next = { ...prev }
       allBlockIds.forEach((id) => delete next[id])
       return next
     })
     setHappyHourByBlock((prev) => {
+      const next = { ...prev }
+      allBlockIds.forEach((id) => delete next[id])
+      return next
+    })
+    setNewCustomerByBlock((prev) => {
       const next = { ...prev }
       allBlockIds.forEach((id) => delete next[id])
       return next
@@ -399,35 +449,63 @@ export function POSSystem({ storeId }: { storeId: number }) {
             ...updatedSession,
             customerName: updatedSession.customerName ?? customerNames[updatedSession.blockId] ?? undefined,
             happyHour: updatedSession.happyHour ?? happyHourByBlock[updatedSession.blockId] ?? undefined,
+            isNewCustomer:
+              updatedSession.isNewCustomer ?? newCustomerByBlock[updatedSession.blockId] ?? undefined,
           }
-      setSessions((prev) => {
-        const exists = prev.find((s) => s.id === sessionWithCache.id)
-        if (exists) {
-          return prev.map((s) => (s.id === sessionWithCache.id ? sessionWithCache : s))
-        }
-        return [...prev, sessionWithCache]
-      })
-      // sessions は書き戻し用の useEffect を持たないため直接同期する
-      lastLocalWriteRef.current = Date.now()
-      upsertSessions([sessionWithCache], storeId).catch((e) => console.error("[DB]sessions update:", e))
-
       const unpaidItems = updatedSession.orderItems.filter((i) => !i.isPaid)
       const hasItems = unpaidItems.length > 0
       const status = hasItems ? "occupied" : "empty"
       const totalQty = unpaidItems.reduce((sum, i) => sum + i.quantity, 0)
-      // プライマリ + 連結ブロック全てのステータスを更新
       const allBlockIds = [updatedSession.blockId, ...(updatedSession.linkedBlockIds ?? [])]
+
+      // 未会計オーダーが無くなった席は空席になるため、その来店も終了として扱う。
+      // セッションを開いたまま残すと、入店時間や顧客名が次の客に引き継がれてしまう。
+      const sessionToSave = hasItems
+        ? sessionWithCache
+        : stripGuestInfo({ ...sessionWithCache, endedAt: sessionWithCache.endedAt ?? new Date() })
+
+      setSessions((prev) => {
+        const exists = prev.find((s) => s.id === sessionToSave.id)
+        if (exists) {
+          return prev.map((s) => (s.id === sessionToSave.id ? sessionToSave : s))
+        }
+        return [...prev, sessionToSave]
+      })
+      // sessions は書き戻し用の useEffect を持たないため直接同期する
+      lastLocalWriteRef.current = Date.now()
+      upsertSessions([sessionToSave], storeId).catch((e) => console.error("[DB]sessions update:", e))
+
+      // プライマリ + 連結ブロック全てのステータスを更新
       setBlocks((prev) =>
         prev.map((b) => {
           if (!allBlockIds.includes(b.id)) return b
-          if (!hasItems) return { ...b, status: "empty", startedAt: undefined }
+          if (!hasItems) return { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
           // 累計3オーダーに達したタイミングで初めてタイマー開始
           const startedAt = totalQty >= 3 ? (b.startedAt ?? new Date()) : b.startedAt
           return { ...b, status, startedAt }
         })
       )
+
+      // 空席になったら接客情報のローカルキャッシュも破棄する
+      if (!hasItems) {
+        setCustomerNames((prev) => {
+          const next = { ...prev }
+          allBlockIds.forEach((id) => delete next[id])
+          return next
+        })
+        setHappyHourByBlock((prev) => {
+          const next = { ...prev }
+          allBlockIds.forEach((id) => delete next[id])
+          return next
+        })
+        setNewCustomerByBlock((prev) => {
+          const next = { ...prev }
+          allBlockIds.forEach((id) => delete next[id])
+          return next
+        })
+      }
     },
-    [sessions, customerNames, happyHourByBlock]
+    [sessions, customerNames, happyHourByBlock, newCustomerByBlock]
   )
 
   const handleCheckout = useCallback(
@@ -462,6 +540,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
         customerName: data.customerName,
         sessionStartedAt: session.startedAt,
         squarePaymentId: data.squarePaymentId,
+        // 新規客の集計用。Square 復帰時は CheckoutData 側の値が正
+        isNewCustomer: data.isNewCustomer ?? session.isNewCustomer ?? false,
       }
       // Square復帰直後はDB再読込と競合しうるため、ローカル更新時刻を先に記録して
       // 古い fetch 結果が会計後の状態を上書きしないようにする
@@ -514,7 +594,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
           if (allPaid) {
             return { ...b, status: "checked_out", checkedOutAt: now }
           }
-          return { ...b, status: remaining.length > 0 ? "occupied" : "empty" }
+          if (remaining.length > 0) return { ...b, status: "occupied" }
+          return { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
         })
       )
 
@@ -700,7 +781,9 @@ export function POSSystem({ storeId }: { storeId: number }) {
     setBlocks((prev) =>
       prev.map((b) =>
         b.id === blockId
-          ? { ...b, status: b.status === "reserved" ? "empty" : "reserved" }
+          ? b.status === "reserved"
+            ? { ...b, status: "empty", startedAt: undefined, checkedOutAt: undefined }
+            : { ...b, status: "reserved" }
           : b
       )
     )
@@ -929,7 +1012,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
       })
     )
 
-    // ローカルキャッシュ（顧客名・ハッピーアワー）を移動元から移動先へ転送し、移動元は完全クリア
+    // ローカルキャッシュ（顧客名・ハッピーアワー・新規客）を移動元から移動先へ転送し、移動元は完全クリア
     setCustomerNames((prev) => {
       const next = { ...prev }
       if (next[moveSource]) next[moveDest] = next[moveSource]
@@ -937,6 +1020,12 @@ export function POSSystem({ storeId }: { storeId: number }) {
       return next
     })
     setHappyHourByBlock((prev) => {
+      const next = { ...prev }
+      if (next[moveSource] !== undefined) next[moveDest] = next[moveSource]
+      delete next[moveSource]
+      return next
+    })
+    setNewCustomerByBlock((prev) => {
       const next = { ...prev }
       if (next[moveSource] !== undefined) next[moveDest] = next[moveSource]
       delete next[moveSource]
@@ -1219,6 +1308,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
         onHappyHourChange={handleHappyHourChange}
         customerName={currentCustomerName}
         onCustomerNameChange={handleCustomerNameChange}
+        isNewCustomer={currentIsNewCustomer}
+        onIsNewCustomerChange={handleIsNewCustomerChange}
         resumeSplit={resumeSplit}
         onResumeSplitHandled={handleResumeSplitHandled}
       />

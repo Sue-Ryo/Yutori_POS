@@ -857,6 +857,15 @@ export function AdminReport({
   const cashlessSales = activePayments.reduce((sum, p) => sum + p.cashlessAmount, 0)
   const totalGuests = activePayments.reduce((sum, p) => sum + p.guestCount, 0)
   const groupCount = activePayments.length
+  // 新規客は伝票単位で数える。個別会計で会計が複数回に分かれても1組・1回ぶんの人数にする
+  const newCustomerSessions = new Map<string, number>()
+  activePayments
+    .filter((p) => p.isNewCustomer)
+    .forEach((p) => {
+      newCustomerSessions.set(p.sessionId, Math.max(newCustomerSessions.get(p.sessionId) ?? 0, p.guestCount))
+    })
+  const newGroupCount = newCustomerSessions.size
+  const newGuestCount = [...newCustomerSessions.values()].reduce((sum, n) => sum + n, 0)
   const avgPerGuest = totalGuests > 0 ? Math.round(totalSales / totalGuests) : 0
   const periodExpenses = expenses
     .filter((e) =>
@@ -999,8 +1008,8 @@ export function AdminReport({
                     />
                     <StatCard
                       icon={<Users className="h-4 w-4" />}
-                      label="客数 / 組数"
-                      value={`${totalGuests}名 / ${groupCount}組`}
+                      label="客数 / 組数（【】は新規）"
+                      value={`${totalGuests}名【${newGuestCount}】 / ${groupCount}組【${newGroupCount}】`}
                     />
                     <StatCard
                       icon={<BarChart2 className="h-4 w-4" />}

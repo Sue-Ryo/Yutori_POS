@@ -66,6 +66,8 @@ export interface BlockSession {
   note?: string
   customerName?: string
   happyHour?: boolean
+  /** その来店が新規客かどうか。会計時に Payment へコピーされる */
+  isNewCustomer?: boolean
 }
 
 export interface CheckoutData {
@@ -85,6 +87,7 @@ export interface CheckoutData {
   customerName?: string
   sessionStartedAt?: Date
   squarePaymentId?: string
+  isNewCustomer?: boolean
 }
 
 export interface Payment {
@@ -109,6 +112,8 @@ export interface Payment {
   sessionStartedAt?: Date
   syncedToSheetAt?: Date
   squarePaymentId?: string
+  /** 新規客の来店だったか。日報・スプレッドシートの新規集計に使う */
+  isNewCustomer?: boolean
 }
 
 export interface LayoutElement {
