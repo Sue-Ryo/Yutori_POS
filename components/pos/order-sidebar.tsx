@@ -269,6 +269,19 @@ export function OrderSidebar({
     }
   }, [isOpen])
 
+  // 分割の初期選択。各明細の数量を回数で均等に分け、端数は先の回が多く持つ。
+  // 「3人が同じものを頼んで3分割」のような使い方で、開いた時点で正しい状態にする
+  const buildRoundQty = (items: OrderItem[], rounds: number, roundIndex: number) => {
+    const next: Record<string, number> = {}
+    items.forEach((i) => {
+      const perRound = Math.floor(i.quantity / rounds)
+      const remainder = i.quantity % rounds
+      const qty = perRound + (roundIndex < remainder ? 1 : 0)
+      if (qty > 0) next[i.id] = qty
+    })
+    return next
+  }
+
   const resetSplitState = () => {
     setSplitMode(false)
     setSplitRounds(null)
@@ -294,8 +307,14 @@ export function OrderSidebar({
     setSplitMode(true)
     setSplitRounds(plan.totalRounds)
     setSplitRoundIndex(plan.completedRounds)
-    // 最終回の対象は splitSelectedIds 側で残り全てに導出されるため、選択はいったん空に戻す
-    setRoundQty({})
+    // 最終回は splitQtyById 側で残り全てに導出されるため、ここでの初期値は使われない
+    setRoundQty(
+      buildRoundQty(
+        session.orderItems.filter((i) => !i.isPaid),
+        plan.totalRounds,
+        plan.completedRounds,
+      ),
+    )
     if (openModal) setShowSplitModal(true)
   }
 
@@ -381,15 +400,15 @@ export function OrderSidebar({
     0,
   )
 
-  // 一部だけ支払う明細は、その数量ぶんの金額で計算する
-  const targetItems =
-    splitMode && splitSelectedIds.length > 0
-      ? unpaidItems.flatMap((i) => {
-          const qty = splitQtyById[i.id] ?? 0
-          if (qty <= 0) return []
-          return [qty >= i.quantity ? i : { ...i, quantity: qty, subtotal: i.price * qty }]
-        })
-      : unpaidItems
+  // 分割会計中は選んだぶんだけが対象。一部数量だけの明細はその数量で計算する。
+  // 未選択のときに全件へフォールバックすると、選ぶ前に全体の合計が出てしまうため分岐しない
+  const targetItems = splitMode
+    ? unpaidItems.flatMap((i) => {
+        const qty = splitQtyById[i.id] ?? 0
+        if (qty <= 0) return []
+        return [qty >= i.quantity ? i : { ...i, quantity: qty, subtotal: i.price * qty }]
+      })
+    : unpaidItems
 
   // ハッピーアワー計算（item.category を優先、なければ productCategoryMap にフォールバック）
   const isHhTarget = (i: { name: string; productId: string; category?: string }) =>
@@ -406,9 +425,13 @@ export function OrderSidebar({
   const hhResult = calcHhSubtotal(targetItems, hhGuestCount, productCategoryMap)
   const { happyHourCharge, drinkOverage, nonHhSubtotal } = hhResult
 
-  const subtotal = happyHour
-    ? hhResult.subtotal
-    : targetItems.reduce((sum, i) => sum + i.subtotal, 0)
+  // 対象が1件も無いときは0。HHは明細が空でも基本料金を返すため明示的に落とす
+  const subtotal =
+    targetItems.length === 0
+      ? 0
+      : happyHour
+      ? hhResult.subtotal
+      : targetItems.reduce((sum, i) => sum + i.subtotal, 0)
 
   const selectedCoupon = coupons.find((c) => c.id === selectedCouponId && c.isActive)
   const getItemCategory = (item: OrderItem) => item.category ?? productCategoryMap[item.productId]
@@ -627,7 +650,7 @@ export function OrderSidebar({
   const handleSelectSplitRounds = (rounds: number) => {
     setSplitRounds(rounds)
     setSplitRoundIndex(0)
-    setRoundQty({})
+    setRoundQty(buildRoundQty(unpaidItems, rounds, 0))
   }
 
   // 1回目の決済前ならモーダルを閉じるだけで分割自体を取り消す
@@ -1582,9 +1605,14 @@ export function OrderSidebar({
               <>
                 {/* 2画面目: この回に含めるオーダーを選ぶ */}
                 <div className="min-h-0 flex-1 overflow-y-auto p-4">
-                  {isFinalSplitRound && (
+                  {isFinalSplitRound ? (
                     <p className="mb-3 rounded-lg bg-warning/15 p-2 text-xs font-medium text-warning">
                       最終回のため、残りのオーダーすべてが対象です
+                    </p>
+                  ) : (
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      人数で均等に振り分けた状態です。変えたい場合は数量の[−][+]で調整、
+                      行をタップするとその明細ごと選択/解除できます
                     </p>
                   )}
                   <OrderItemSelectList
