@@ -36,6 +36,7 @@ import {
   CheckCheck,
   Loader2,
   AlertCircle,
+  RotateCcw,
 } from "lucide-react"
 
 import {
@@ -53,6 +54,7 @@ import {
   type SquareTender,
   type SquarePhase,
 } from "@/lib/square-pos-link"
+import { loadSplitPlan, saveSplitPlan, clearSplitPlan } from "@/lib/split-checkout"
 
 interface OrderSidebarProps {
   isOpen: boolean
@@ -73,6 +75,9 @@ interface OrderSidebarProps {
   onHappyHourChange: (value: boolean) => void
   customerName: string
   onCustomerNameChange: (name: string) => void
+  /** 分割会計の1回分が終わって次の回へ進むときの合図。nonce は回ごとに増える */
+  resumeSplit: { sessionId: string; nonce: number } | null
+  onResumeSplitHandled: () => void
 }
 
 export function OrderSidebar({
@@ -94,12 +99,21 @@ export function OrderSidebar({
   onHappyHourChange,
   customerName,
   onCustomerNameChange,
+  resumeSplit,
+  onResumeSplitHandled,
 }: OrderSidebarProps) {
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({})
   const [openCategoryIds, setOpenCategoryIds] = useState<Set<string>>(new Set())
   const [splitMode, setSplitMode] = useState(false)
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
+  // 会計エリアは既定で畳み、オーダー内容の表示領域を優先する
+  const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [showSplitModal, setShowSplitModal] = useState(false)
+  // 何回に分けて支払うか。null は回数未選択（モーダルの1画面目）
+  const [splitRounds, setSplitRounds] = useState<number | null>(null)
+  // 0 始まり。表示は splitRoundIndex + 1 回目
+  const [splitRoundIndex, setSplitRoundIndex] = useState(0)
   const [selectedCouponId, setSelectedCouponId] = useState<string>("")
   const [showCashlessModal, setShowCashlessModal] = useState(false)
   const [showPayPayQr, setShowPayPayQr] = useState(false)
@@ -121,6 +135,7 @@ export function OrderSidebar({
   // （selectedBlock を含めないと、セッション未作成の席同士で備考が混ざる）
   useEffect(() => {
     setNoteText(session?.note ?? "")
+    setCheckoutOpen(false)
   }, [session?.id, selectedBlock?.id])
 
   // サイドバーが閉じたらモーダルも閉じる
@@ -128,8 +143,53 @@ export function OrderSidebar({
     if (!isOpen) {
       setShowOrderModal(false)
       setPendingCounts({})
+      setShowSplitModal(false)
     }
   }, [isOpen])
+
+  const resetSplitState = () => {
+    setSplitMode(false)
+    setSplitRounds(null)
+    setSplitRoundIndex(0)
+    setSelectedItemIds([])
+  }
+
+  // 分割会計の進捗を localStorage から復元する。
+  // Square アプリ切替で1回ごとにページが再読込されるため、state だけでは続きを追えない。
+  const restoreSplitPlan = (openModal: boolean) => {
+    const plan = session ? loadSplitPlan(storeId) : null
+    // 別の伝票を開いたときに前の席の分割状態を持ち越さない
+    if (!session || !plan || plan.sessionId !== session.id) {
+      resetSplitState()
+      return
+    }
+    // 全部払い終わっていれば分割は完了しているので進捗を捨てる
+    if (session.orderItems.every((i) => i.isPaid)) {
+      clearSplitPlan(storeId)
+      resetSplitState()
+      return
+    }
+    setSplitMode(true)
+    setSplitRounds(plan.totalRounds)
+    setSplitRoundIndex(plan.completedRounds)
+    // 最終回の対象は splitSelectedIds 側で残り全てに導出されるため、選択はいったん空に戻す
+    setSelectedItemIds([])
+    if (openModal) setShowSplitModal(true)
+  }
+
+  // 分割途中の席を開き直したとき：進捗だけ戻し、モーダルは開かない
+  useEffect(() => {
+    if (isOpen) restoreSplitPlan(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, session?.id])
+
+  // 1回分の決済が終わって戻ってきたとき：次の回のモーダルを自動で開く
+  useEffect(() => {
+    if (!isOpen || !session || resumeSplit?.sessionId !== session.id) return
+    restoreSplitPlan(true)
+    onResumeSplitHandled()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, session?.id, resumeSplit?.nonce])
 
   // サイドバーが閉じたら Square 処理もキャンセル
   useEffect(() => {
@@ -177,9 +237,15 @@ export function OrderSidebar({
 
   const unpaidItems = session?.orderItems.filter((i) => !i.isPaid) ?? []
 
+  // 最終回は残りを全部含めないと未払いが残るため、選択状態によらず残り全てを対象にする。
+  // 途中でオーダーが追加された場合も取りこぼさないよう、保存値ではなく都度導出する。
+  const isFinalSplitRound = splitRounds !== null && splitRoundIndex >= splitRounds - 1
+  const splitSelectedIds =
+    splitMode && isFinalSplitRound ? unpaidItems.map((i) => i.id) : selectedItemIds
+
   const targetItems =
-    splitMode && selectedItemIds.length > 0
-      ? unpaidItems.filter((i) => selectedItemIds.includes(i.id))
+    splitMode && splitSelectedIds.length > 0
+      ? unpaidItems.filter((i) => splitSelectedIds.includes(i.id))
       : unpaidItems
 
   // ハッピーアワー計算（item.category を優先、なければ productCategoryMap にフォールバック）
@@ -376,6 +442,52 @@ export function OrderSidebar({
     )
   }
 
+  // ── 個別会計（分割会計） ──────────────────────────────────────────
+  const splitRemainingItems = unpaidItems.filter((i) => !splitSelectedIds.includes(i.id))
+  const splitRemainingSubtotal = splitRemainingItems.reduce((sum, i) => sum + i.subtotal, 0)
+
+  const handleOpenSplitModal = () => {
+    // 進行中の分割があればその回から、無ければ回数選択から始める
+    if (splitMode && splitRounds !== null) {
+      setShowSplitModal(true)
+      return
+    }
+    setSplitMode(true)
+    setSplitRounds(null)
+    setSplitRoundIndex(0)
+    setSelectedItemIds([])
+    setShowSplitModal(true)
+  }
+
+  const handleSelectSplitRounds = (rounds: number) => {
+    setSplitRounds(rounds)
+    setSplitRoundIndex(0)
+    setSelectedItemIds([])
+  }
+
+  // 1回目の決済前ならモーダルを閉じるだけで分割自体を取り消す
+  const handleCloseSplitModal = () => {
+    setShowSplitModal(false)
+    if (splitRoundIndex === 0) handleAbortSplit()
+  }
+
+  const handleAbortSplit = () => {
+    clearSplitPlan(storeId)
+    resetSplitState()
+    setShowSplitModal(false)
+  }
+
+  // 決済前に進捗を保存する。Square から戻ったとき pos-system 側が回数を進める
+  const persistSplitPlan = () => {
+    if (!session || !splitMode || splitRounds === null) return
+    saveSplitPlan(storeId, {
+      sessionId: session.id,
+      blockId: selectedBlock.id,
+      totalRounds: splitRounds,
+      completedRounds: splitRoundIndex,
+    })
+  }
+
   const resolvedCustomerName = customerName.trim() || undefined
 
   const buildCheckoutData = (cashAmount: number, cashlessAmount: number): CheckoutData => ({
@@ -386,7 +498,7 @@ export function OrderSidebar({
     totalAmount,
     couponId: selectedCouponId || undefined,
     guestCount,
-    paidItemIds: splitMode && selectedItemIds.length > 0 ? selectedItemIds : [],
+    paidItemIds: splitMode && splitSelectedIds.length > 0 ? splitSelectedIds : [],
     customerName: resolvedCustomerName,
   })
 
@@ -417,6 +529,7 @@ export function OrderSidebar({
 
   const handleCheckoutCash = () => {
     if (!session) return
+    persistSplitPlan()
     const data = buildCheckoutData(totalAmount, 0)
 
     if (SQUARE_APP_ID) {
@@ -430,6 +543,7 @@ export function OrderSidebar({
 
   const handleCheckoutCashless = async () => {
     if (!session) return
+    persistSplitPlan()
 
     // Square POSアプリ連携モード: 同一端末のSquareアプリへ切り替えて決済する
     if (SQUARE_APP_ID) {
@@ -496,6 +610,7 @@ export function OrderSidebar({
   // PayPayは店頭QRでの受け取りのためSquareを経由せず、POSに直接記録する
   const handleCheckoutPayPay = () => {
     if (!session) return
+    persistSplitPlan()
     onCheckout(session.id, buildCheckoutData(0, totalAmount))
     setShowCashlessModal(false)
     resetCheckoutState()
@@ -513,6 +628,7 @@ export function OrderSidebar({
 
   const handleCheckoutCombined = () => {
     if (!session || !combinedValid) return
+    persistSplitPlan()
     const data = buildCheckoutData(combinedCashNum, combinedCashlessNum)
 
     // Squareアプリは1回の起動で分割できないため、まず現金分だけを決済する。
@@ -529,6 +645,9 @@ export function OrderSidebar({
   const resetCheckoutState = () => {
     setSplitMode(false)
     setSelectedItemIds([])
+    setSplitRounds(null)
+    setSplitRoundIndex(0)
+    setShowSplitModal(false)
     setSelectedCouponId("")
     setCashReceived("")
     setCombinedMode(false)
@@ -662,19 +781,13 @@ export function OrderSidebar({
                   key={item.id}
                   className={cn(
                     "rounded-lg border border-border p-3 transition-colors",
-                    splitMode && selectedItemIds.includes(item.id) && "border-primary bg-primary/10",
+                    splitMode && splitSelectedIds.includes(item.id) && "border-primary bg-primary/10",
                   )}
-                  onClick={() => splitMode && handleSplitToggle(item.id)}
                 >
                   <div className="flex items-start gap-2">
-                    {splitMode && (
-                      <input
-                        type="checkbox"
-                        checked={selectedItemIds.includes(item.id)}
-                        onChange={() => handleSplitToggle(item.id)}
-                        className="mt-0.5 h-4 w-4"
-                        onClick={(e) => e.stopPropagation()}
-                      />
+                    {/* 選択自体は個別会計モーダルで行う。ここはこの回の対象を示すだけ */}
+                    {splitMode && splitSelectedIds.includes(item.id) && (
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
@@ -783,6 +896,98 @@ export function OrderSidebar({
 
         {/* 会計エリア */}
         <div className="space-y-3 border-t border-border p-3 sm:p-4">
+          {/* 分割会計の進行状況。モーダルを閉じても続きが分かるようにする */}
+          {splitMode && splitRounds !== null && (
+            <div className="rounded-lg border border-info bg-info/10 p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-info">
+                  <Split className="h-4 w-4 shrink-0" />
+                  <span className="text-sm font-bold">
+                    個別会計 {splitRoundIndex + 1}回目 / 全{splitRounds}回
+                  </span>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {splitSelectedIds.length}品選択
+                </span>
+              </div>
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" className="h-8 flex-1" onClick={() => setShowSplitModal(true)}>
+                  この回の会計を続ける
+                </Button>
+                <Button size="sm" variant="ghost" className="h-8 px-2 text-xs" onClick={handleAbortSplit}>
+                  分割をやめる
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Square の進行状況は畳んでいても見えるようにセクションの外に置く */}
+          {squareState === "processing" && (
+            <div className="rounded-lg border border-info bg-info/10 p-4 space-y-3">
+              <div className="flex items-center gap-2 text-info">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="font-bold">Square 決済処理中</span>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {SQUARE_APP_ID ? "Squareアプリを起動しています…" : "端末でカードをタッチ・挿入してください"}
+              </p>
+              <p className="text-lg font-bold">¥{totalAmount.toLocaleString()}</p>
+              <Button variant="outline" className="w-full" onClick={handleCancelSquare}>
+                キャンセル
+              </Button>
+            </div>
+          )}
+
+          {squareState === "error" && (
+            <div className="rounded-lg border border-destructive bg-destructive/10 p-3 space-y-2">
+              <div className="flex items-center gap-2 text-destructive">
+                <AlertCircle className="h-4 w-4" />
+                <span className="text-sm font-bold">Square 決済エラー</span>
+              </div>
+              <p className="text-xs text-destructive">{squareError}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => { setSquareState("idle"); setSquareError(null) }}
+              >
+                閉じる
+              </Button>
+            </div>
+          )}
+
+          {/* 会計セクション（畳んでオーダー内容の表示領域を広く取る） */}
+          <button
+            onClick={() => setCheckoutOpen((v) => !v)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-left transition-colors hover:bg-muted"
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="font-bold">会計</span>
+              {/* 畳んだときに隠れると困る情報はここに出す */}
+              {happyHour && (
+                <span className="shrink-0 rounded bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">HH</span>
+              )}
+              {selectedCoupon && (
+                <span className="truncate rounded bg-warning/20 px-1.5 py-0.5 text-[10px] font-bold text-warning">
+                  {selectedCoupon.name}
+                </span>
+              )}
+            </span>
+            <span className="flex shrink-0 items-center gap-1">
+              <span className="font-bold">
+                {checkoutOpen
+                  ? `¥${totalAmount.toLocaleString()}`
+                  : `合計金額（¥${totalAmount.toLocaleString()}）`}
+              </span>
+              {checkoutOpen ? (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              )}
+            </span>
+          </button>
+
+          {checkoutOpen && (<>
           {/* ハッピーアワートグル */}
           <Button
             variant={happyHour ? "default" : "outline"}
@@ -810,13 +1015,14 @@ export function OrderSidebar({
               variant={splitMode ? "default" : "outline"}
               size="sm"
               className={cn("flex-1", splitMode && "bg-info")}
-              onClick={() => {
-                setSplitMode(!splitMode)
-                setSelectedItemIds([])
-              }}
+              // 分割開始には最低2品必要。進行中は残り1品でも続きを開けるようにする
+              disabled={!splitMode && unpaidItems.length < 2}
+              onClick={handleOpenSplitModal}
             >
               <Split className="mr-1 h-4 w-4" />
-              {splitMode ? `${selectedItemIds.length}品選択中` : "個別会計"}
+              {splitMode && splitRounds !== null
+                ? `個別会計 ${splitRoundIndex + 1}/${splitRounds}回目`
+                : "個別会計"}
             </Button>
             <div className="flex flex-1 flex-col gap-1">
               <select
@@ -894,44 +1100,10 @@ export function OrderSidebar({
               <span>¥{taxAmount.toLocaleString()}</span>
             </div>
             <div className="flex justify-between border-t border-border pt-1 text-lg font-bold">
-              <span>{splitMode && selectedItemIds.length > 0 ? "個別合計" : "合計"}</span>
+              <span>{splitMode && splitSelectedIds.length > 0 ? "個別合計" : "合計"}</span>
               <span>¥{totalAmount.toLocaleString()}</span>
             </div>
           </div>
-
-          {squareState === "processing" && (
-            <div className="rounded-lg border border-info bg-info/10 p-4 space-y-3">
-              <div className="flex items-center gap-2 text-info">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span className="font-bold">Square 決済処理中</span>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                {SQUARE_APP_ID ? "Squareアプリを起動しています…" : "端末でカードをタッチ・挿入してください"}
-              </p>
-              <p className="text-lg font-bold">¥{totalAmount.toLocaleString()}</p>
-              <Button variant="outline" className="w-full" onClick={handleCancelSquare}>
-                キャンセル
-              </Button>
-            </div>
-          )}
-
-          {squareState === "error" && (
-            <div className="rounded-lg border border-destructive bg-destructive/10 p-3 space-y-2">
-              <div className="flex items-center gap-2 text-destructive">
-                <AlertCircle className="h-4 w-4" />
-                <span className="text-sm font-bold">Square 決済エラー</span>
-              </div>
-              <p className="text-xs text-destructive">{squareError}</p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={() => { setSquareState("idle"); setSquareError(null) }}
-              >
-                閉じる
-              </Button>
-            </div>
-          )}
 
           {squareState === "idle" && (!combinedMode ? (
             <>
@@ -1076,6 +1248,8 @@ export function OrderSidebar({
               </Button>
             </>
           ))}
+          </>)}
+          {/* ここまで会計セクション。以下の席操作ボタンは畳んでも常に出す */}
 
           {selectedBlock.status === "checked_out" && (
             <Button
@@ -1087,6 +1261,24 @@ export function OrderSidebar({
               <div className="flex flex-col items-start">
                 <span className="font-bold">バッシング完了</span>
                 <span className="text-xs opacity-80">空席にする</span>
+              </div>
+            </Button>
+          )}
+
+          {/* 未会計オーダーが1件も無いのに「使用中」で固まった席の復旧口。
+              会計後の席ステータス同期に失敗した場合や、連結だけして注文が入らなかった場合に
+              バッシング完了ボタンが出ず空席に戻せなくなるのを防ぐ。 */}
+          {selectedBlock.status === "occupied" && unpaidItems.length === 0 && (
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-14 w-full"
+              onClick={onBussingComplete}
+            >
+              <RotateCcw className="mr-2 h-5 w-5" />
+              <div className="flex flex-col items-start">
+                <span className="font-bold">空席に戻す</span>
+                <span className="text-xs opacity-80">未会計のオーダーがありません</span>
               </div>
             </Button>
           )}
@@ -1110,6 +1302,166 @@ export function OrderSidebar({
           )}
         </div>
       </div>
+
+      {/* ── 個別会計（分割会計）モーダル ────────────────────────────── */}
+      {showSplitModal && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 sm:items-center">
+          <div className="flex max-h-[90vh] w-full max-w-md flex-col rounded-t-2xl bg-card shadow-2xl sm:mx-4 sm:rounded-2xl">
+            {/* ヘッダー */}
+            <div className="flex items-center justify-between border-b border-border p-4">
+              <div className="flex items-center gap-2">
+                <Split className="h-5 w-5 text-info" />
+                <h3 className="font-bold">個別会計</h3>
+                {splitRounds !== null && (
+                  <span className="rounded-full bg-info/20 px-2 py-0.5 text-xs font-bold text-info">
+                    {splitRoundIndex + 1}回目 / 全{splitRounds}回
+                  </span>
+                )}
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleCloseSplitModal}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {splitRounds === null ? (
+              /* 1画面目: 支払い回数の選択 */
+              <div className="p-4">
+                <p className="mb-1 font-semibold">何回に分けて支払いますか？</p>
+                <p className="mb-4 text-xs text-muted-foreground">
+                  回数を選ぶと、1回ごとに対象のオーダーを選んで会計できます
+                </p>
+                <div className="grid grid-cols-5 gap-2">
+                  {[2, 3, 4, 5, 6].map((n) => (
+                    <Button
+                      key={n}
+                      variant="outline"
+                      className="h-14 flex-col gap-0"
+                      // 1回につき最低1品は要るため、品数より多い分割は選べない
+                      disabled={n > unpaidItems.length}
+                      onClick={() => handleSelectSplitRounds(n)}
+                    >
+                      <span className="text-lg font-bold">{n}</span>
+                      <span className="text-[10px] text-muted-foreground">分割</span>
+                    </Button>
+                  ))}
+                </div>
+                <p className="mt-4 text-xs text-muted-foreground">
+                  合計 ¥{unpaidItems.reduce((s, i) => s + i.subtotal, 0).toLocaleString()}（税抜） / {unpaidItems.length}品
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* 2画面目: この回に含めるオーダーを選ぶ */}
+                <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                  {isFinalSplitRound && (
+                    <p className="mb-3 rounded-lg bg-warning/15 p-2 text-xs font-medium text-warning">
+                      最終回のため、残りのオーダーすべてが対象です
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {unpaidItems.map((item) => {
+                      const checked = splitSelectedIds.includes(item.id)
+                      return (
+                        <button
+                          key={item.id}
+                          disabled={isFinalSplitRound}
+                          onClick={() => handleSplitToggle(item.id)}
+                          className={cn(
+                            "flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors",
+                            checked ? "border-primary bg-primary/10" : "border-border",
+                            isFinalSplitRound ? "cursor-default opacity-80" : "active:scale-[0.99]",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "flex h-5 w-5 shrink-0 items-center justify-center rounded border-2",
+                              checked ? "border-primary bg-primary" : "border-muted-foreground/40",
+                            )}
+                          >
+                            {checked && <Check className="h-3.5 w-3.5 text-primary-foreground" />}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5">
+                              <span className="truncate font-medium text-sm">{item.name}</span>
+                              {happyHour && isHhTarget(item) && (
+                                <span className="shrink-0 rounded bg-orange-500 px-1 py-0.5 text-[10px] font-bold text-white">HH</span>
+                              )}
+                            </span>
+                            <span className="block text-xs text-muted-foreground">
+                              ×{item.quantity}
+                              {item.optionMemo ? ` / ${item.optionMemo}` : ""}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-sm font-semibold">
+                            ¥{item.subtotal.toLocaleString()}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* フッター: 金額と支払い方法 */}
+                <div className="space-y-3 border-t border-border p-4">
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between font-bold">
+                      <span>この回の合計（税込）</span>
+                      <span>¥{totalAmount.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>残り {splitRemainingItems.length}品</span>
+                      <span>税抜 ¥{splitRemainingSubtotal.toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      size="lg"
+                      className="h-14 bg-success text-primary-foreground hover:bg-success/90"
+                      disabled={splitSelectedIds.length === 0 || totalAmount === 0}
+                      onClick={() => {
+                        setShowSplitModal(false)
+                        handleCheckoutCash()
+                      }}
+                    >
+                      <Banknote className="mr-2 h-5 w-5" />
+                      <span className="font-bold">現金</span>
+                    </Button>
+                    <Button
+                      size="lg"
+                      className="h-14 bg-info text-foreground hover:bg-info/90"
+                      disabled={splitSelectedIds.length === 0 || totalAmount === 0}
+                      onClick={() => {
+                        setShowSplitModal(false)
+                        setShowCashlessModal(true)
+                      }}
+                    >
+                      <CreditCard className="mr-2 h-5 w-5" />
+                      <span className="font-bold">クレペイ</span>
+                    </Button>
+                  </div>
+                  {/* 複合会計は金額入力が要るためサイドバー側の入力欄へ引き継ぐ */}
+                  <Button
+                    variant="outline"
+                    className="h-11 w-full"
+                    disabled={splitSelectedIds.length === 0 || totalAmount === 0}
+                    onClick={() => {
+                      setShowSplitModal(false)
+                      setCombinedMode(true)
+                      // 金額入力欄は会計セクション内にあるため開いておく
+                      setCheckoutOpen(true)
+                    }}
+                  >
+                    <Banknote className="mr-1.5 h-4 w-4" />
+                    <CreditCard className="mr-2 h-4 w-4" />
+                    <span className="text-sm font-bold">複合（現金＋クレペイ）で払う</span>
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── キャッシュレス支払い方法選択 ─────────────────────────────── */}
       {showCashlessModal && (
