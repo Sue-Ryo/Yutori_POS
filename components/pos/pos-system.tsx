@@ -48,6 +48,7 @@ import {
   loadPendingSquareCheckout,
   clearPendingSquareCheckout,
   startSquarePosPayment,
+  type PendingSquareCheckout,
 } from "@/lib/square-pos-link"
 import { loadSplitPlan, saveSplitPlan, clearSplitPlan } from "@/lib/split-checkout"
 import { LayoutEditor } from "./layout-editor"
@@ -636,19 +637,75 @@ export function POSSystem({ storeId }: { storeId: number }) {
     [sessions, settings.businessDayStartTime, handleCloseSidebar]
   )
 
+  // ── Square 決済の取りこぼし復旧 ──────────────────────────────────
+  // 決済後にブラウザへ戻る前に端末を閉じるとコールバックが来ず、会計が記録されない。
+  // 復帰時に未処理の保留会計を拾い、Square の決済履歴と照合して確認する。
+  const [squareRecovery, setSquareRecovery] = useState<{
+    pending: PendingSquareCheckout
+    blockName: string
+    lookup: "loading" | "found" | "notfound" | "error"
+    transactionId?: string
+    lookupError?: string
+  } | null>(null)
+
+  const startSquareRecovery = useCallback(async (pending: PendingSquareCheckout) => {
+    const session = sessions.find((s) => s.id === pending.sessionId)
+    const block = blocks.find((b) => b.id === session?.blockId)
+    setSquareRecovery({ pending, blockName: block?.name ?? "不明な席", lookup: "loading" })
+    try {
+      const res = await fetch("/api/square/payments/lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: pending.amount ?? pending.data.totalAmount,
+          // 起動直前の時刻から少し余裕を持って検索する
+          sinceIso: new Date(pending.createdAt - 5 * 60 * 1000).toISOString(),
+        }),
+      })
+      const data = await res.json() as {
+        matches?: { id: string; createdAt: string | null }[]
+        error?: string
+      }
+      if (!res.ok) throw new Error(data.error ?? "照会に失敗しました")
+      const match = data.matches?.[0]
+      setSquareRecovery((prev) =>
+        prev && {
+          ...prev,
+          lookup: match ? "found" : "notfound",
+          transactionId: match?.id,
+        },
+      )
+    } catch (e) {
+      setSquareRecovery((prev) =>
+        prev && { ...prev, lookup: "error", lookupError: e instanceof Error ? e.message : String(e) },
+      )
+    }
+  }, [sessions, blocks])
+
   // Square POSアプリからの決済結果コールバック処理（モバイルWeb連携）
   const squareCallbackDoneRef = useRef(false)
   useEffect(() => {
     if (squareCallbackDoneRef.current) return
     const params = new URLSearchParams(window.location.search)
     const result = parseSquareCallback(params)
-    if (!result) {
-      squareCallbackDoneRef.current = true
-      return
-    }
 
     // DB読み込み完了までは sessions が初期値のままで伝票を特定できないため待つ
     if (!dbLoaded) return
+
+    if (!result) {
+      squareCallbackDoneRef.current = true
+      // コールバックが来ないまま戻ってきた会計が残っていないか確認する
+      const stranded = loadPendingSquareCheckout(storeId)
+      if (stranded) {
+        if (sessions.some((s) => s.id === stranded.sessionId)) {
+          startSquareRecovery(stranded)
+        } else {
+          // 伝票が既に無いなら復旧しようがないので保留を捨てる
+          clearPendingSquareCheckout(storeId)
+        }
+      }
+      return
+    }
 
     squareCallbackDoneRef.current = true
     window.history.replaceState(null, "", window.location.pathname)
@@ -714,7 +771,63 @@ export function POSSystem({ storeId }: { storeId: number }) {
       : result.transactionId
 
     handleCheckout(pending.sessionId, { ...pending.data, squarePaymentId })
-  }, [sessions, dbLoaded, handleCheckout, storeId])
+  }, [sessions, dbLoaded, handleCheckout, storeId, startSquareRecovery])
+
+  // ページが再読込されずにタブへ戻る場合もあるため、表示に戻った時点でも拾う
+  useEffect(() => {
+    const handleVisible = () => {
+      if (document.visibilityState !== "visible") return
+      if (!dbLoaded || squareRecovery) return
+      // コールバック付きで戻ってきた場合は上の処理に任せる
+      if (parseSquareCallback(new URLSearchParams(window.location.search))) return
+      const stranded = loadPendingSquareCheckout(storeId)
+      if (stranded && sessions.some((s) => s.id === stranded.sessionId)) {
+        startSquareRecovery(stranded)
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisible)
+    return () => document.removeEventListener("visibilitychange", handleVisible)
+  }, [dbLoaded, squareRecovery, sessions, storeId, startSquareRecovery])
+
+  // 決済できていた → 会計として記録する
+  const handleRecoveryRecord = useCallback(() => {
+    if (!squareRecovery) return
+    const { pending, transactionId } = squareRecovery
+    clearPendingSquareCheckout(storeId)
+    setSquareRecovery(null)
+    const squarePaymentId = pending.cashTransactionId
+      ? [pending.cashTransactionId, transactionId].filter(Boolean).join(",")
+      : transactionId
+    handleCheckout(pending.sessionId, { ...pending.data, squarePaymentId })
+  }, [squareRecovery, storeId, handleCheckout])
+
+  // 複合会計の現金分だけ終わっていた場合は、続けてクレペイ分をSquareで決済する
+  const handleRecoveryContinueCashless = useCallback(() => {
+    if (!squareRecovery) return
+    const { pending, transactionId } = squareRecovery
+    setSquareRecovery(null)
+    const launched = startSquarePosPayment(
+      storeId,
+      {
+        sessionId: pending.sessionId,
+        data: pending.data,
+        phase: "cashless",
+        cashTransactionId: transactionId ?? pending.cashTransactionId,
+      },
+      pending.data.cashlessAmount,
+      "card",
+    )
+    if (!launched) {
+      clearPendingSquareCheckout(storeId)
+      alert("クレペイ分のSquareアプリを起動できませんでした。会計は記録していません。")
+    }
+  }, [squareRecovery, storeId])
+
+  // 決済できていなかった → 保留を捨てて元の状態に戻す
+  const handleRecoveryDiscard = useCallback(() => {
+    clearPendingSquareCheckout(storeId)
+    setSquareRecovery(null)
+  }, [storeId])
 
   const handleCancelPayment = useCallback(
     (paymentId: string) => {
@@ -1390,6 +1503,92 @@ export function POSSystem({ storeId }: { storeId: number }) {
             onUpsertExpense={handleUpsertExpense}
           />
         )}
+        {/* Square から戻れなかった会計の確認。決済履歴と照合したうえで記録/破棄を選ぶ */}
+        {squareRecovery && (
+          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4">
+            <div className="w-full max-w-sm rounded-2xl bg-card p-5 shadow-2xl">
+              <div className="mb-3 flex items-center gap-2 text-warning">
+                <RefreshCw className="h-5 w-5" />
+                <h3 className="font-bold">未処理のSquare決済があります</h3>
+              </div>
+
+              <div className="mb-4 space-y-1 rounded-lg bg-muted p-3 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">席</span>
+                  <span className="font-medium">{squareRecovery.blockName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Squareへ渡した金額</span>
+                  <span className="font-bold">
+                    ¥{(squareRecovery.pending.amount ?? squareRecovery.pending.data.totalAmount).toLocaleString()}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">操作時刻</span>
+                  <span>{new Date(squareRecovery.pending.createdAt).toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+                </div>
+                {squareRecovery.pending.phase === "cash" && (
+                  <p className="pt-1 text-xs text-warning">
+                    複合会計の現金分です。クレペイ分 ¥{squareRecovery.pending.data.cashlessAmount.toLocaleString()} はまだ決済されていません。
+                  </p>
+                )}
+              </div>
+
+              {squareRecovery.lookup === "loading" && (
+                <p className="mb-4 text-sm text-muted-foreground">Squareの決済履歴を照会しています…</p>
+              )}
+              {squareRecovery.lookup === "found" && (
+                <p className="mb-4 rounded-lg bg-success/15 p-3 text-sm font-medium text-success">
+                  同額の決済がSquare側に見つかりました。会計として記録できます。
+                </p>
+              )}
+              {squareRecovery.lookup === "notfound" && (
+                <p className="mb-4 rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+                  同額の決済がSquare側に見つかりませんでした。決済されていない可能性があります。
+                  Squareアプリの履歴を確認してから選んでください。
+                </p>
+              )}
+              {squareRecovery.lookup === "error" && (
+                <p className="mb-4 rounded-lg bg-muted p-3 text-xs text-muted-foreground">
+                  Squareへの照会に失敗しました（{squareRecovery.lookupError}）。
+                  Squareアプリの履歴を確認してから選んでください。
+                </p>
+              )}
+
+              <div className="space-y-2">
+                {squareRecovery.pending.phase === "cash" ? (
+                  <Button
+                    size="lg"
+                    className="h-12 w-full"
+                    disabled={squareRecovery.lookup === "loading"}
+                    onClick={handleRecoveryContinueCashless}
+                  >
+                    現金分は決済済み → クレペイ分に進む
+                  </Button>
+                ) : (
+                  <Button
+                    size="lg"
+                    className="h-12 w-full bg-success text-primary-foreground hover:bg-success/90"
+                    disabled={squareRecovery.lookup === "loading"}
+                    onClick={handleRecoveryRecord}
+                  >
+                    決済できていた → 会計を記録
+                  </Button>
+                )}
+                <Button
+                  size="lg"
+                  variant="outline"
+                  className="h-12 w-full"
+                  disabled={squareRecovery.lookup === "loading"}
+                  onClick={handleRecoveryDiscard}
+                >
+                  決済していない → 破棄して席に戻す
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {dbError && (
           <div className="fixed bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-destructive px-4 py-2 text-sm text-destructive-foreground shadow-lg">
             {dbError}
