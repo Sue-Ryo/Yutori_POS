@@ -1148,6 +1148,11 @@ export function AdminReport({
                                   ? "現金"
                                   : "クレペイ"}
                               </span>
+                              {payment.isNewCustomer && (
+                                <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground">
+                                  新規
+                                </span>
+                              )}
                               {splitLabel && (
                                 <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
                                   {splitLabel}
