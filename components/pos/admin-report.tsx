@@ -855,17 +855,22 @@ export function AdminReport({
   const totalSales = activePayments.reduce((sum, p) => sum + p.totalAmount, 0)
   const cashSales = activePayments.reduce((sum, p) => sum + p.cashAmount, 0)
   const cashlessSales = activePayments.reduce((sum, p) => sum + p.cashlessAmount, 0)
-  const totalGuests = activePayments.reduce((sum, p) => sum + p.guestCount, 0)
-  const groupCount = activePayments.length
-  // 新規客は伝票単位で数える。個別会計で会計が複数回に分かれても1組・1回ぶんの人数にする
-  const newCustomerSessions = new Map<string, number>()
-  activePayments
-    .filter((p) => p.isNewCustomer)
-    .forEach((p) => {
-      newCustomerSessions.set(p.sessionId, Math.max(newCustomerSessions.get(p.sessionId) ?? 0, p.guestCount))
+  // 客数・組数は伝票単位で数える。
+  // 個別会計で会計が複数回に分かれても、1組・1回ぶんの人数として扱う
+  const countBySession = (rows: Payment[]) => {
+    const guestsBySession = new Map<string, number>()
+    rows.forEach((p) => {
+      guestsBySession.set(p.sessionId, Math.max(guestsBySession.get(p.sessionId) ?? 0, p.guestCount))
     })
-  const newGroupCount = newCustomerSessions.size
-  const newGuestCount = [...newCustomerSessions.values()].reduce((sum, n) => sum + n, 0)
+    return {
+      groups: guestsBySession.size,
+      guests: [...guestsBySession.values()].reduce((sum, n) => sum + n, 0),
+    }
+  }
+  const { groups: groupCount, guests: totalGuests } = countBySession(activePayments)
+  const { groups: newGroupCount, guests: newGuestCount } = countBySession(
+    activePayments.filter((p) => p.isNewCustomer),
+  )
   const avgPerGuest = totalGuests > 0 ? Math.round(totalSales / totalGuests) : 0
   const periodExpenses = expenses
     .filter((e) =>

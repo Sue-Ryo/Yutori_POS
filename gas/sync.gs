@@ -67,6 +67,24 @@ function doPost(e) {
   }
 }
 
+// ── 来客数・組数の集計 ───────────────────────────────────────────────
+// 個別会計で会計が複数回に分かれても、1組・1回ぶんの人数として数える
+function countBySession(payments) {
+  var guestsBySession = {}
+  payments.forEach(function(p) {
+    var sid = p.session_id
+    var guests = p.guest_count || 0
+    if (guestsBySession[sid] === undefined || guestsBySession[sid] < guests) {
+      guestsBySession[sid] = guests
+    }
+  })
+  var sids = Object.keys(guestsBySession)
+  return {
+    groups: sids.length,
+    guests: sids.reduce(function(s, sid) { return s + guestsBySession[sid] }, 0),
+  }
+}
+
 // ── 年次シートを全再構築（1シートで1年分） ────────────────────────────
 function rebuildAnnualSheet(year) {
   var allPayments = fetchPaymentsForYear(year)
@@ -110,18 +128,10 @@ function rebuildAnnualSheet(year) {
     var totalSales    = dayPayments.reduce(function(s, p) { return s + (p.total_amount    || 0) }, 0)
     var totalCash     = dayPayments.reduce(function(s, p) { return s + (p.cash_amount     || 0) }, 0)
     var totalCashless = dayPayments.reduce(function(s, p) { return s + (p.cashless_amount || 0) }, 0)
-    var totalGuests   = dayPayments.reduce(function(s, p) { return s + (p.guest_count     || 0) }, 0)
-    // 新規客は伝票単位で数える。個別会計で会計が複数回に分かれても1組・1回ぶんの人数にする
-    var newBySession = {}
-    dayPayments.forEach(function(p) {
-      if (!p.is_new_customer) return
-      var sid = p.session_id
-      var guests = p.guest_count || 0
-      if (newBySession[sid] === undefined || newBySession[sid] < guests) newBySession[sid] = guests
-    })
-    var newGroups = Object.keys(newBySession).length
-    var newGuests = Object.keys(newBySession).reduce(function(s, sid) { return s + newBySession[sid] }, 0)
     var totalDiscount = dayPayments.reduce(function(s, p) { return s + (p.discount_amount || 0) }, 0)
+    // 来客数・組数は伝票単位で数える
+    var all = countBySession(dayPayments)
+    var newOnes = countBySession(dayPayments.filter(function(p) { return p.is_new_customer }))
     var expenseAmt    = expense ? (expense.amount        || 0) : 0
     var expenseCount  = expense ? (expense.receipt_count || 0) : 0
     var profit = totalSales - expenseAmt
@@ -133,10 +143,10 @@ function rebuildAnnualSheet(year) {
       dateStr,
       getDayStr(date),
       weather,
-      totalGuests,
-      dayPayments.length,
-      newGuests,
-      newGroups,
+      all.guests,
+      all.groups,
+      newOnes.guests,
+      newOnes.groups,
       totalSales, totalCash, totalCashless,
       totalDiscount,
       expenseAmt, expenseCount, profit
