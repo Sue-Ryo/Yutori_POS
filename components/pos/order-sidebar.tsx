@@ -257,9 +257,16 @@ export function OrderSidebar({
 
   // 席またはセッションが切り替わったら備考を貼り直す
   // （selectedBlock を含めないと、セッション未作成の席同士で備考が混ざる）
+  // クーポンと入金額は席ごとの入力なので、持ち越すと別の席の会計に
+  // そのまま適用されてしまう。席が変わった時点で必ず捨てる
   useEffect(() => {
     setNoteText(session?.note ?? "")
     setCheckoutOpen(false)
+    setSelectedCouponId("")
+    setCashReceived("")
+    setCombinedMode(false)
+    setCombinedCash("")
+    setCombinedCashless("")
   }, [session?.id, selectedBlock?.id])
 
   // サイドバーが閉じたらモーダルも閉じる
