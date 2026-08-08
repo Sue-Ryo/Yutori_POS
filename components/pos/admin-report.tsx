@@ -891,14 +891,18 @@ export function AdminReport({
   const avgPerGuest = totalGuests > 0 ? Math.round(totalSales / totalGuests) : 0
 
   // 個別会計で複数回に分かれた会計に「分割 n/N」を出すための対応表。
-  // 期間で切ると回数が欠けるため、絞り込み前の全会計から伝票ごとに数える
+  // 期間で切ると回数が欠けるため、絞り込み前の全会計から伝票ごとに数える。
+  // 取消済みは「無かったこと」なので除外する（取消して再会計しただけの伝票を
+  // 分割と誤判定しないため）
   const splitLabelByPaymentId = (() => {
     const bySession = new Map<string, Payment[]>()
-    payments.forEach((p) => {
-      const list = bySession.get(p.sessionId) ?? []
-      list.push(p)
-      bySession.set(p.sessionId, list)
-    })
+    payments
+      .filter((p) => !p.canceledAt)
+      .forEach((p) => {
+        const list = bySession.get(p.sessionId) ?? []
+        list.push(p)
+        bySession.set(p.sessionId, list)
+      })
     const labels = new Map<string, string>()
     bySession.forEach((list) => {
       if (list.length < 2) return // 1回で払い切っていれば分割ではない
