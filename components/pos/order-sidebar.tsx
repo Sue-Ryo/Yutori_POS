@@ -57,6 +57,116 @@ import {
 } from "@/lib/square-pos-link"
 import { loadSplitPlan, saveSplitPlan, clearSplitPlan } from "@/lib/split-checkout"
 
+// 明細を数量単位で選ぶリスト。個別会計と連結解除の両方で使う
+function OrderItemSelectList({
+  items,
+  quantities,
+  locked = false,
+  qtyLabel,
+  happyHour,
+  isHhTarget,
+  onToggle,
+  onQtyChange,
+}: {
+  items: OrderItem[]
+  /** 明細ID → 選択数量。未設定・0 は未選択 */
+  quantities: Record<string, number>
+  /** true なら選択を変更できない（最終回など） */
+  locked?: boolean
+  qtyLabel: string
+  happyHour: boolean
+  isHhTarget: (item: OrderItem) => boolean
+  onToggle: (item: OrderItem) => void
+  onQtyChange: (item: OrderItem, delta: number) => void
+}) {
+  return (
+    <div className="space-y-2">
+      {items.map((item) => {
+        const qty = quantities[item.id] ?? 0
+        const checked = qty > 0
+        const isPartial = checked && qty < item.quantity
+        return (
+          <div
+            key={item.id}
+            className={cn(
+              "rounded-lg border transition-colors",
+              checked ? "border-primary bg-primary/10" : "border-border",
+            )}
+          >
+            <button
+              disabled={locked}
+              onClick={() => onToggle(item)}
+              className={cn(
+                "flex w-full items-center gap-3 p-3 text-left",
+                locked ? "cursor-default" : "active:scale-[0.99]",
+              )}
+            >
+              <span
+                className={cn(
+                  "flex h-5 w-5 shrink-0 items-center justify-center rounded border-2",
+                  checked ? "border-primary bg-primary" : "border-muted-foreground/40",
+                )}
+              >
+                {checked && <Check className="h-3.5 w-3.5 text-primary-foreground" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5">
+                  <span className="truncate font-medium text-sm">{item.name}</span>
+                  {happyHour && isHhTarget(item) && (
+                    <span className="shrink-0 rounded bg-orange-500 px-1 py-0.5 text-[10px] font-bold text-white">HH</span>
+                  )}
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  ¥{item.price.toLocaleString()} × {item.quantity}
+                  {item.optionMemo ? ` / ${item.optionMemo}` : ""}
+                </span>
+              </span>
+              <span className="shrink-0 text-right">
+                <span className="block text-sm font-semibold">
+                  ¥{(item.price * (checked ? qty : item.quantity)).toLocaleString()}
+                </span>
+                {isPartial && (
+                  <span className="block text-[10px] text-muted-foreground">{qty}点ぶん</span>
+                )}
+              </span>
+            </button>
+
+            {/* 同じ商品が複数ある明細は、含める数を選べるようにする */}
+            {item.quantity > 1 && !locked && (
+              <div className="flex items-center justify-between gap-2 border-t border-border/60 px-3 py-2">
+                <span className="text-xs text-muted-foreground">{qtyLabel}</span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={qty <= 0}
+                    onClick={() => onQtyChange(item, -1)}
+                  >
+                    <Minus className="h-3.5 w-3.5" />
+                  </Button>
+                  <span className="w-10 text-center text-sm font-bold tabular-nums">
+                    {qty} / {item.quantity}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={qty >= item.quantity}
+                    onClick={() => onQtyChange(item, 1)}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 interface OrderSidebarProps {
   isOpen: boolean
   onClose: () => void
@@ -69,7 +179,7 @@ interface OrderSidebarProps {
   blocks: ServiceBlock[]
   onUpdateSession: (session: BlockSession) => void
   onCheckout: (sessionId: string, data: CheckoutData) => void
-  onUnlinkBlock: (sessionId: string, blockIdToUnlink: string) => void
+  onUnlinkBlock: (sessionId: string, blockIdToUnlink: string, itemQuantities: Record<string, number>) => void
   onBussingComplete: () => void
   onReserveBlock: (blockId: string) => void
   happyHour: boolean
@@ -117,6 +227,9 @@ export function OrderSidebar({
   // 会計エリアは既定で畳み、オーダー内容の表示領域を優先する
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [showSplitModal, setShowSplitModal] = useState(false)
+  // 連結解除でオーダーを分けるモーダル。解除する席IDと、その席へ移す数量
+  const [unlinkTargetId, setUnlinkTargetId] = useState<string | null>(null)
+  const [unlinkQty, setUnlinkQty] = useState<Record<string, number>>({})
   // 何回に分けて支払うか。null は回数未選択（モーダルの1画面目）
   const [splitRounds, setSplitRounds] = useState<number | null>(null)
   // 0 始まり。表示は splitRoundIndex + 1 回目
@@ -151,6 +264,7 @@ export function OrderSidebar({
       setShowOrderModal(false)
       setPendingCounts({})
       setShowSplitModal(false)
+      setUnlinkTargetId(null)
     }
   }, [isOpen])
 
@@ -520,6 +634,44 @@ export function OrderSidebar({
     setShowSplitModal(false)
   }
 
+  // ── 連結解除（オーダーの分け方を選ぶ） ───────────────────────────
+  // 初期値は連結時の出所（originBlockId）。そのまま確定すれば従来どおりの分かれ方になる
+  const handleOpenUnlinkModal = (blockIdToUnlink: string) => {
+    const defaults: Record<string, number> = {}
+    unpaidItems.forEach((i) => {
+      if (i.originBlockId === blockIdToUnlink) defaults[i.id] = i.quantity
+    })
+    setUnlinkQty(defaults)
+    setUnlinkTargetId(blockIdToUnlink)
+  }
+
+  const handleUnlinkToggle = (item: OrderItem) => {
+    setUnlinkQty((prev) => {
+      const next = { ...prev }
+      if ((next[item.id] ?? 0) > 0) delete next[item.id]
+      else next[item.id] = item.quantity
+      return next
+    })
+  }
+
+  const handleUnlinkQtyChange = (item: OrderItem, delta: number) => {
+    setUnlinkQty((prev) => {
+      const current = Math.min(prev[item.id] ?? 0, item.quantity)
+      const nextQty = Math.max(0, Math.min(item.quantity, current + delta))
+      const next = { ...prev }
+      if (nextQty === 0) delete next[item.id]
+      else next[item.id] = nextQty
+      return next
+    })
+  }
+
+  const handleConfirmUnlink = () => {
+    if (!session || !unlinkTargetId) return
+    onUnlinkBlock(session.id, unlinkTargetId, unlinkQty)
+    setUnlinkTargetId(null)
+    setUnlinkQty({})
+  }
+
   // 決済前に進捗を保存する。Square から戻ったとき pos-system 側が回数を進める
   const persistSplitPlan = () => {
     if (!session || !splitMode || splitRounds === null) return
@@ -798,7 +950,7 @@ export function OrderSidebar({
                   >
                     {lb.name}
                     <button
-                      onClick={() => onUnlinkBlock(session.id, linkedId)}
+                      onClick={() => handleOpenUnlinkModal(linkedId)}
                       className="ml-0.5 text-muted-foreground hover:text-destructive"
                       title="連結解除"
                     >
@@ -1427,92 +1579,16 @@ export function OrderSidebar({
                       最終回のため、残りのオーダーすべてが対象です
                     </p>
                   )}
-                  <div className="space-y-2">
-                    {unpaidItems.map((item) => {
-                      const qty = splitQtyById[item.id] ?? 0
-                      const checked = qty > 0
-                      const isPartial = checked && qty < item.quantity
-                      return (
-                        <div
-                          key={item.id}
-                          className={cn(
-                            "rounded-lg border transition-colors",
-                            checked ? "border-primary bg-primary/10" : "border-border",
-                          )}
-                        >
-                          <button
-                            disabled={isFinalSplitRound}
-                            onClick={() => handleSplitToggle(item)}
-                            className={cn(
-                              "flex w-full items-center gap-3 p-3 text-left",
-                              isFinalSplitRound ? "cursor-default" : "active:scale-[0.99]",
-                            )}
-                          >
-                            <span
-                              className={cn(
-                                "flex h-5 w-5 shrink-0 items-center justify-center rounded border-2",
-                                checked ? "border-primary bg-primary" : "border-muted-foreground/40",
-                              )}
-                            >
-                              {checked && <Check className="h-3.5 w-3.5 text-primary-foreground" />}
-                            </span>
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span className="truncate font-medium text-sm">{item.name}</span>
-                                {happyHour && isHhTarget(item) && (
-                                  <span className="shrink-0 rounded bg-orange-500 px-1 py-0.5 text-[10px] font-bold text-white">HH</span>
-                                )}
-                              </span>
-                              <span className="block text-xs text-muted-foreground">
-                                ¥{item.price.toLocaleString()} × {item.quantity}
-                                {item.optionMemo ? ` / ${item.optionMemo}` : ""}
-                              </span>
-                            </span>
-                            <span className="shrink-0 text-right">
-                              <span className="block text-sm font-semibold">
-                                ¥{(item.price * (checked ? qty : item.quantity)).toLocaleString()}
-                              </span>
-                              {isPartial && (
-                                <span className="block text-[10px] text-muted-foreground">
-                                  {qty}点ぶん
-                                </span>
-                              )}
-                            </span>
-                          </button>
-
-                          {/* 同じ商品が複数ある明細は、この回に含める数を選べるようにする */}
-                          {item.quantity > 1 && !isFinalSplitRound && (
-                            <div className="flex items-center justify-between gap-2 border-t border-border/60 px-3 py-2">
-                              <span className="text-xs text-muted-foreground">この回に含める数</span>
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  disabled={qty <= 0}
-                                  onClick={() => handleSplitQtyChange(item, -1)}
-                                >
-                                  <Minus className="h-3.5 w-3.5" />
-                                </Button>
-                                <span className="w-10 text-center text-sm font-bold tabular-nums">
-                                  {qty} / {item.quantity}
-                                </span>
-                                <Button
-                                  variant="outline"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  disabled={qty >= item.quantity}
-                                  onClick={() => handleSplitQtyChange(item, 1)}
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
+                  <OrderItemSelectList
+                    items={unpaidItems}
+                    quantities={splitQtyById}
+                    locked={isFinalSplitRound}
+                    qtyLabel="この回に含める数"
+                    happyHour={happyHour}
+                    isHhTarget={isHhTarget}
+                    onToggle={handleSplitToggle}
+                    onQtyChange={handleSplitQtyChange}
+                  />
                 </div>
 
                 {/* フッター: 金額と支払い方法 */}
@@ -1573,6 +1649,59 @@ export function OrderSidebar({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── 連結解除: 解除する席へ移すオーダーを選ぶ ─────────────────── */}
+      {unlinkTargetId && (
+        <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 sm:items-center">
+          <div className="flex max-h-[90vh] w-full max-w-md flex-col rounded-t-2xl bg-card shadow-2xl sm:mx-4 sm:rounded-2xl">
+            <div className="flex items-center justify-between border-b border-border p-4">
+              <div className="flex items-center gap-2">
+                <Link2 className="h-5 w-5 text-info" />
+                <h3 className="font-bold">
+                  連結解除：{blocks.find((b) => b.id === unlinkTargetId)?.name ?? "席"}
+                </h3>
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setUnlinkTargetId(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <p className="mb-3 text-xs text-muted-foreground">
+                解除する席へ移すオーダーを選んでください。選ばなかったぶんはこの伝票に残ります。
+              </p>
+              {unpaidItems.length > 0 ? (
+                <OrderItemSelectList
+                  items={unpaidItems}
+                  quantities={unlinkQty}
+                  qtyLabel="移すぶんの数"
+                  happyHour={happyHour}
+                  isHhTarget={isHhTarget}
+                  onToggle={handleUnlinkToggle}
+                  onQtyChange={handleUnlinkQtyChange}
+                />
+              ) : (
+                <div className="flex h-24 items-center justify-center rounded-lg border border-dashed border-border">
+                  <p className="text-sm text-muted-foreground">未会計のオーダーはありません</p>
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3 border-t border-border p-4">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">移すオーダー</span>
+                <span className="font-bold">
+                  {Object.values(unlinkQty).reduce((sum, q) => sum + q, 0)}点
+                </span>
+              </div>
+              <Button size="lg" className="h-14 w-full" onClick={handleConfirmUnlink}>
+                <Link2 className="mr-2 h-5 w-5" />
+                <span className="font-bold">この内容で連結を解除</span>
+              </Button>
+            </div>
           </div>
         </div>
       )}
