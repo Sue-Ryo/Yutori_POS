@@ -36,10 +36,13 @@ export interface PendingSquareCheckout {
   phase?: SquarePhase
   // 複合会計1段階目（現金）の取引ID。2段階目の完了時に一緒に記録する
   cashTransactionId?: string
+  // Square アプリへ渡した金額。復帰できなかったときに決済履歴と照合するのに使う
+  amount?: number
 }
 
-// 起動から復帰までの想定上限。これを超えた保留会計は破棄する
-const PENDING_TTL_MS = 15 * 60 * 1000
+// 決済後に端末を閉じたまま時間が空くこともあるため長めに保持する。
+// 期限内なら復帰時に「未処理の決済」として拾い上げて確認できる
+const PENDING_TTL_MS = 3 * 60 * 60 * 1000
 
 const pendingKey = (storeId: number) => `pos_square_pending_${storeId}`
 
@@ -114,7 +117,7 @@ export function startSquarePosPayment(
   const url = buildSquarePosUrl(amount, callbackUrl, tender, pending.data.customerName)
   if (!url) return false
 
-  savePendingSquareCheckout(storeId, pending)
+  savePendingSquareCheckout(storeId, { ...pending, amount })
   window.location.href = url
   return true
 }
