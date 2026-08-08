@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils"
 import type {
   ServiceBlock,
   BlockSession,
+  OrderItem,
   LayoutElement,
   BusinessSettings,
   Payment,
@@ -468,12 +469,30 @@ export function POSSystem({ storeId }: { storeId: number }) {
       setPayments((prev) => [newPayment, ...prev])
       upsertPayments([newPayment], storeId).catch((e) => console.error("[DB]payments checkout:", e))
 
-      // セッションの明細を支払済に更新（paymentId を紐付け）
-      const updatedItems = session.orderItems.map((i) =>
-        targetItemIds.includes(i.id)
-          ? { ...i, isPaid: true, paidAt: now, paymentId: newPayment.id }
-          : i
-      )
+      // セッションの明細を支払済に更新（paymentId を紐付け）。
+      // 同じ商品をまとめた明細の一部だけを支払う場合は、支払い分と残り分に分割する。
+      const paidQuantities = data.paidItemQuantities ?? {}
+      const updatedItems = session.orderItems.flatMap<OrderItem>((i) => {
+        if (i.isPaid || !targetItemIds.includes(i.id)) return [i]
+        const payQty = paidQuantities[i.id] ?? i.quantity
+        if (payQty <= 0) return [i]
+        if (payQty >= i.quantity) {
+          return [{ ...i, isPaid: true, paidAt: now, paymentId: newPayment.id }]
+        }
+        const remainQty = i.quantity - payQty
+        return [
+          {
+            ...i,
+            id: `i-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            quantity: payQty,
+            subtotal: i.price * payQty,
+            isPaid: true,
+            paidAt: now,
+            paymentId: newPayment.id,
+          },
+          { ...i, quantity: remainQty, subtotal: i.price * remainQty },
+        ]
+      })
       const allPaid = updatedItems.every((i) => i.isPaid)
       const updatedSession: BlockSession = {
         ...session,

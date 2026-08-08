@@ -106,7 +106,9 @@ export function OrderSidebar({
   const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({})
   const [openCategoryIds, setOpenCategoryIds] = useState<Set<string>>(new Set())
   const [splitMode, setSplitMode] = useState(false)
-  const [selectedItemIds, setSelectedItemIds] = useState<string[]>([])
+  // 個別会計でこの回に含める数量（明細ID → 数量）。同じ商品がまとまった明細を
+  // 数量単位で分けられるよう、ID の集合ではなく数量で持つ
+  const [roundQty, setRoundQty] = useState<Record<string, number>>({})
   // 会計エリアは既定で畳み、オーダー内容の表示領域を優先する
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [showSplitModal, setShowSplitModal] = useState(false)
@@ -151,7 +153,7 @@ export function OrderSidebar({
     setSplitMode(false)
     setSplitRounds(null)
     setSplitRoundIndex(0)
-    setSelectedItemIds([])
+    setRoundQty({})
   }
 
   // 分割会計の進捗を localStorage から復元する。
@@ -173,7 +175,7 @@ export function OrderSidebar({
     setSplitRounds(plan.totalRounds)
     setSplitRoundIndex(plan.completedRounds)
     // 最終回の対象は splitSelectedIds 側で残り全てに導出されるため、選択はいったん空に戻す
-    setSelectedItemIds([])
+    setRoundQty({})
     if (openModal) setShowSplitModal(true)
   }
 
@@ -240,12 +242,25 @@ export function OrderSidebar({
   // 最終回は残りを全部含めないと未払いが残るため、選択状態によらず残り全てを対象にする。
   // 途中でオーダーが追加された場合も取りこぼさないよう、保存値ではなく都度導出する。
   const isFinalSplitRound = splitRounds !== null && splitRoundIndex >= splitRounds - 1
-  const splitSelectedIds =
-    splitMode && isFinalSplitRound ? unpaidItems.map((i) => i.id) : selectedItemIds
+  // この回に含める数量。明細の数量を超えないよう毎回丸める
+  const splitQtyById: Record<string, number> = {}
+  if (splitMode) {
+    unpaidItems.forEach((i) => {
+      const qty = isFinalSplitRound ? i.quantity : Math.min(roundQty[i.id] ?? 0, i.quantity)
+      if (qty > 0) splitQtyById[i.id] = qty
+    })
+  }
+  const splitSelectedIds = Object.keys(splitQtyById)
+  const splitSelectedUnits = Object.values(splitQtyById).reduce((sum, q) => sum + q, 0)
 
+  // 一部だけ支払う明細は、その数量ぶんの金額で計算する
   const targetItems =
     splitMode && splitSelectedIds.length > 0
-      ? unpaidItems.filter((i) => splitSelectedIds.includes(i.id))
+      ? unpaidItems.flatMap((i) => {
+          const qty = splitQtyById[i.id] ?? 0
+          if (qty <= 0) return []
+          return [qty >= i.quantity ? i : { ...i, quantity: qty, subtotal: i.price * qty }]
+        })
       : unpaidItems
 
   // ハッピーアワー計算（item.category を優先、なければ productCategoryMap にフォールバック）
@@ -436,15 +451,37 @@ export function OrderSidebar({
     onUpdateSession({ ...session, orderItems: updatedItems })
   }
 
-  const handleSplitToggle = (itemId: string) => {
-    setSelectedItemIds((prev) =>
-      prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId],
-    )
+  // ── 個別会計（分割会計） ──────────────────────────────────────────
+  // 明細まるごとの選択切り替え（数量1の品と、まとめて選びたいとき用）
+  const handleSplitToggle = (item: OrderItem) => {
+    setRoundQty((prev) => {
+      const next = { ...prev }
+      if ((next[item.id] ?? 0) > 0) delete next[item.id]
+      else next[item.id] = item.quantity
+      return next
+    })
   }
 
-  // ── 個別会計（分割会計） ──────────────────────────────────────────
-  const splitRemainingItems = unpaidItems.filter((i) => !splitSelectedIds.includes(i.id))
-  const splitRemainingSubtotal = splitRemainingItems.reduce((sum, i) => sum + i.subtotal, 0)
+  // 同じ商品がまとまった明細のうち、この回に含める数だけを増減する
+  const handleSplitQtyChange = (item: OrderItem, delta: number) => {
+    setRoundQty((prev) => {
+      const current = Math.min(prev[item.id] ?? 0, item.quantity)
+      const nextQty = Math.max(0, Math.min(item.quantity, current + delta))
+      const next = { ...prev }
+      if (nextQty === 0) delete next[item.id]
+      else next[item.id] = nextQty
+      return next
+    })
+  }
+
+  const splitRemainingUnits = unpaidItems.reduce(
+    (sum, i) => sum + (i.quantity - (splitQtyById[i.id] ?? 0)),
+    0,
+  )
+  const splitRemainingSubtotal = unpaidItems.reduce(
+    (sum, i) => sum + i.price * (i.quantity - (splitQtyById[i.id] ?? 0)),
+    0,
+  )
 
   const handleOpenSplitModal = () => {
     // 進行中の分割があればその回から、無ければ回数選択から始める
@@ -455,14 +492,14 @@ export function OrderSidebar({
     setSplitMode(true)
     setSplitRounds(null)
     setSplitRoundIndex(0)
-    setSelectedItemIds([])
+    setRoundQty({})
     setShowSplitModal(true)
   }
 
   const handleSelectSplitRounds = (rounds: number) => {
     setSplitRounds(rounds)
     setSplitRoundIndex(0)
-    setSelectedItemIds([])
+    setRoundQty({})
   }
 
   // 1回目の決済前ならモーダルを閉じるだけで分割自体を取り消す
@@ -499,6 +536,8 @@ export function OrderSidebar({
     couponId: selectedCouponId || undefined,
     guestCount,
     paidItemIds: splitMode && splitSelectedIds.length > 0 ? splitSelectedIds : [],
+    // 一部数量だけ支払う明細は、会計時に pos-system 側で支払い分と残り分に分割される
+    paidItemQuantities: splitMode && splitSelectedIds.length > 0 ? splitQtyById : undefined,
     customerName: resolvedCustomerName,
   })
 
@@ -644,7 +683,7 @@ export function OrderSidebar({
 
   const resetCheckoutState = () => {
     setSplitMode(false)
-    setSelectedItemIds([])
+    setRoundQty({})
     setSplitRounds(null)
     setSplitRoundIndex(0)
     setShowSplitModal(false)
@@ -785,9 +824,15 @@ export function OrderSidebar({
                   )}
                 >
                   <div className="flex items-start gap-2">
-                    {/* 選択自体は個別会計モーダルで行う。ここはこの回の対象を示すだけ */}
-                    {splitMode && splitSelectedIds.includes(item.id) && (
-                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    {/* 選択自体は個別会計モーダルで行う。ここはこの回の対象を示すだけ。
+                        一部の数量だけ対象のときはその数を添える */}
+                    {splitMode && (splitQtyById[item.id] ?? 0) > 0 && (
+                      <span className="mt-0.5 flex shrink-0 items-center gap-0.5 text-primary">
+                        <Check className="h-4 w-4" />
+                        {splitQtyById[item.id] < item.quantity && (
+                          <span className="text-[10px] font-bold">{splitQtyById[item.id]}点</span>
+                        )}
+                      </span>
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center justify-between gap-2">
@@ -907,7 +952,7 @@ export function OrderSidebar({
                   </span>
                 </div>
                 <span className="text-xs text-muted-foreground">
-                  {splitSelectedIds.length}品選択
+                  {splitSelectedUnits}点選択
                 </span>
               </div>
               <div className="mt-2 flex gap-2">
@@ -1010,53 +1055,38 @@ export function OrderSidebar({
             {happyHour ? `ハッピーアワー適用中 (¥${HAPPY_HOUR_BASE.toLocaleString()}/人)` : "ハッピーアワー"}
           </Button>
 
-          <div className="flex gap-2">
-            <Button
-              variant={splitMode ? "default" : "outline"}
-              size="sm"
-              className={cn("flex-1", splitMode && "bg-info")}
-              // 分割開始には最低2品必要。進行中は残り1品でも続きを開けるようにする
-              disabled={!splitMode && unpaidItems.length < 2}
-              onClick={handleOpenSplitModal}
+          <div className="flex flex-col gap-1">
+            <select
+              className="w-full rounded-md border border-border bg-background px-2 text-sm h-9"
+              value={selectedCouponId}
+              onChange={(e) => setSelectedCouponId(e.target.value)}
             >
-              <Split className="mr-1 h-4 w-4" />
-              {splitMode && splitRounds !== null
-                ? `個別会計 ${splitRoundIndex + 1}/${splitRounds}回目`
-                : "個別会計"}
-            </Button>
-            <div className="flex flex-1 flex-col gap-1">
-              <select
-                className="w-full rounded-md border border-border bg-background px-2 text-sm h-9"
-                value={selectedCouponId}
-                onChange={(e) => setSelectedCouponId(e.target.value)}
-              >
-                <option value="">クーポンなし</option>
-                {coupons
-                  .filter((c) => c.isActive)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}（
-                      {c.discountType === "fixed"
-                        ? `−¥${c.discountValue.toLocaleString()}`
-                        : c.discountType === "percent"
-                        ? `−${c.discountValue}%`
-                        : "1品無料"}
-                      ）
-                    </option>
-                  ))}
-              </select>
-              {selectedCoupon?.discountType === "free_drink" && (
-                <span className="text-xs">
-                  {freeDrinkItem ? (
-                    <span className="text-warning font-medium">
-                      無料: {freeDrinkItem.name} (−¥{freeDrinkItem.price.toLocaleString()})
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">ドリンクの注文がありません</span>
-                  )}
-                </span>
-              )}
-            </div>
+              <option value="">クーポンなし</option>
+              {coupons
+                .filter((c) => c.isActive)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}（
+                    {c.discountType === "fixed"
+                      ? `−¥${c.discountValue.toLocaleString()}`
+                      : c.discountType === "percent"
+                      ? `−${c.discountValue}%`
+                      : "1品無料"}
+                    ）
+                  </option>
+                ))}
+            </select>
+            {selectedCoupon?.discountType === "free_drink" && (
+              <span className="text-xs">
+                {freeDrinkItem ? (
+                  <span className="text-warning font-medium">
+                    無料: {freeDrinkItem.name} (−¥{freeDrinkItem.price.toLocaleString()})
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">ドリンクの注文がありません</span>
+                )}
+              </span>
+            )}
           </div>
 
           <div className="space-y-1 rounded-lg bg-muted p-3 text-sm">
@@ -1171,6 +1201,24 @@ export function OrderSidebar({
                 <CreditCard className="mr-2 h-4 w-4" />
                 <div className="flex flex-col items-start">
                   <span className="font-bold text-sm">複合会計（現金＋クレペイ）</span>
+                </div>
+              </Button>
+
+              <Button
+                size="lg"
+                variant="outline"
+                className="h-12 w-full"
+                // 分割開始には最低2点必要。進行中は残り1点でも続きを開けるようにする
+                disabled={!splitMode && totalOrderedQty < 2}
+                onClick={handleOpenSplitModal}
+              >
+                <Split className="mr-2 h-4 w-4" />
+                <div className="flex flex-col items-start">
+                  <span className="font-bold text-sm">
+                    {splitMode && splitRounds !== null
+                      ? `個別会計（${splitRoundIndex + 1}/${splitRounds}回目）`
+                      : "個別会計（オーダーを分けて支払う）"}
+                  </span>
                 </div>
               </Button>
             </>
@@ -1337,7 +1385,7 @@ export function OrderSidebar({
                       variant="outline"
                       className="h-14 flex-col gap-0"
                       // 1回につき最低1品は要るため、品数より多い分割は選べない
-                      disabled={n > unpaidItems.length}
+                      disabled={n > totalOrderedQty}
                       onClick={() => handleSelectSplitRounds(n)}
                     >
                       <span className="text-lg font-bold">{n}</span>
@@ -1346,7 +1394,7 @@ export function OrderSidebar({
                   ))}
                 </div>
                 <p className="mt-4 text-xs text-muted-foreground">
-                  合計 ¥{unpaidItems.reduce((s, i) => s + i.subtotal, 0).toLocaleString()}（税抜） / {unpaidItems.length}品
+                  合計 ¥{unpaidItems.reduce((s, i) => s + i.subtotal, 0).toLocaleString()}（税抜） / {totalOrderedQty}点
                 </p>
               </div>
             ) : (
@@ -1360,42 +1408,87 @@ export function OrderSidebar({
                   )}
                   <div className="space-y-2">
                     {unpaidItems.map((item) => {
-                      const checked = splitSelectedIds.includes(item.id)
+                      const qty = splitQtyById[item.id] ?? 0
+                      const checked = qty > 0
+                      const isPartial = checked && qty < item.quantity
                       return (
-                        <button
+                        <div
                           key={item.id}
-                          disabled={isFinalSplitRound}
-                          onClick={() => handleSplitToggle(item.id)}
                           className={cn(
-                            "flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors",
+                            "rounded-lg border transition-colors",
                             checked ? "border-primary bg-primary/10" : "border-border",
-                            isFinalSplitRound ? "cursor-default opacity-80" : "active:scale-[0.99]",
                           )}
                         >
-                          <span
+                          <button
+                            disabled={isFinalSplitRound}
+                            onClick={() => handleSplitToggle(item)}
                             className={cn(
-                              "flex h-5 w-5 shrink-0 items-center justify-center rounded border-2",
-                              checked ? "border-primary bg-primary" : "border-muted-foreground/40",
+                              "flex w-full items-center gap-3 p-3 text-left",
+                              isFinalSplitRound ? "cursor-default" : "active:scale-[0.99]",
                             )}
                           >
-                            {checked && <Check className="h-3.5 w-3.5 text-primary-foreground" />}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-1.5">
-                              <span className="truncate font-medium text-sm">{item.name}</span>
-                              {happyHour && isHhTarget(item) && (
-                                <span className="shrink-0 rounded bg-orange-500 px-1 py-0.5 text-[10px] font-bold text-white">HH</span>
+                            <span
+                              className={cn(
+                                "flex h-5 w-5 shrink-0 items-center justify-center rounded border-2",
+                                checked ? "border-primary bg-primary" : "border-muted-foreground/40",
+                              )}
+                            >
+                              {checked && <Check className="h-3.5 w-3.5 text-primary-foreground" />}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate font-medium text-sm">{item.name}</span>
+                                {happyHour && isHhTarget(item) && (
+                                  <span className="shrink-0 rounded bg-orange-500 px-1 py-0.5 text-[10px] font-bold text-white">HH</span>
+                                )}
+                              </span>
+                              <span className="block text-xs text-muted-foreground">
+                                ¥{item.price.toLocaleString()} × {item.quantity}
+                                {item.optionMemo ? ` / ${item.optionMemo}` : ""}
+                              </span>
+                            </span>
+                            <span className="shrink-0 text-right">
+                              <span className="block text-sm font-semibold">
+                                ¥{(item.price * (checked ? qty : item.quantity)).toLocaleString()}
+                              </span>
+                              {isPartial && (
+                                <span className="block text-[10px] text-muted-foreground">
+                                  {qty}点ぶん
+                                </span>
                               )}
                             </span>
-                            <span className="block text-xs text-muted-foreground">
-                              ×{item.quantity}
-                              {item.optionMemo ? ` / ${item.optionMemo}` : ""}
-                            </span>
-                          </span>
-                          <span className="shrink-0 text-sm font-semibold">
-                            ¥{item.subtotal.toLocaleString()}
-                          </span>
-                        </button>
+                          </button>
+
+                          {/* 同じ商品が複数ある明細は、この回に含める数を選べるようにする */}
+                          {item.quantity > 1 && !isFinalSplitRound && (
+                            <div className="flex items-center justify-between gap-2 border-t border-border/60 px-3 py-2">
+                              <span className="text-xs text-muted-foreground">この回に含める数</span>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  disabled={qty <= 0}
+                                  onClick={() => handleSplitQtyChange(item, -1)}
+                                >
+                                  <Minus className="h-3.5 w-3.5" />
+                                </Button>
+                                <span className="w-10 text-center text-sm font-bold tabular-nums">
+                                  {qty} / {item.quantity}
+                                </span>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  disabled={qty >= item.quantity}
+                                  onClick={() => handleSplitQtyChange(item, 1)}
+                                >
+                                  <Plus className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )
                     })}
                   </div>
@@ -1409,7 +1502,7 @@ export function OrderSidebar({
                       <span>¥{totalAmount.toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>残り {splitRemainingItems.length}品</span>
+                      <span>残り {splitRemainingUnits}点</span>
                       <span>税抜 ¥{splitRemainingSubtotal.toLocaleString()}</span>
                     </div>
                   </div>
