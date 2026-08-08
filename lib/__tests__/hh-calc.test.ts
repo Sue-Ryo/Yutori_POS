@@ -224,3 +224,53 @@ describe("splitRoundGuestCount（分割会計のHH人数配分）", () => {
     expect(splitTotal).toBe(lump.subtotal)
   })
 })
+
+describe("3席連結・HH適用・3分割の合計（実運用ケース）", () => {
+  // Shisha/Charge/コーラ を3点ずつ。3名で1点ずつ受け持って3分割する
+  const SHISHA = 2000
+  const CHARGE = 500
+  const COLA = 500
+  const guests = 3
+  const rounds = 3
+
+  it("1回目は1名ぶんだけ計上され、全体の合計にはならない", () => {
+    const round1 = calcHhSubtotal(
+      [
+        item("Shisha", "system", SHISHA),
+        item("Charge", "system", CHARGE),
+        item("Cola", "softdrink", COLA),
+      ],
+      splitRoundGuestCount(guests, rounds, 0, false),
+      CAT,
+    )
+    // 1名ぶんの基本料金のみ。ドリンクは¥600/人の上限内で超過なし
+    expect(round1.subtotal).toBe(HAPPY_HOUR_BASE)
+  })
+
+  it("3回の合計が一括会計と一致する", () => {
+    const lump = calcHhSubtotal(
+      [
+        item("Shisha", "system", SHISHA, 3),
+        item("Charge", "system", CHARGE, 3),
+        item("Cola", "softdrink", COLA, 3),
+      ],
+      guests,
+      CAT,
+    ).subtotal
+
+    const splitTotal = Array.from({ length: rounds }, (_, i) =>
+      calcHhSubtotal(
+        [
+          item("Shisha", "system", SHISHA),
+          item("Charge", "system", CHARGE),
+          item("Cola", "softdrink", COLA),
+        ],
+        splitRoundGuestCount(guests, rounds, i, i === rounds - 1),
+        CAT,
+      ).subtotal,
+    ).reduce((s, n) => s + n, 0)
+
+    expect(lump).toBe(HAPPY_HOUR_BASE * guests)
+    expect(splitTotal).toBe(lump)
+  })
+})

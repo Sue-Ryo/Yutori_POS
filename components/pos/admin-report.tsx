@@ -872,6 +872,26 @@ export function AdminReport({
     activePayments.filter((p) => p.isNewCustomer),
   )
   const avgPerGuest = totalGuests > 0 ? Math.round(totalSales / totalGuests) : 0
+
+  // 個別会計で複数回に分かれた会計に「分割 n/N」を出すための対応表。
+  // 期間で切ると回数が欠けるため、絞り込み前の全会計から伝票ごとに数える
+  const splitLabelByPaymentId = (() => {
+    const bySession = new Map<string, Payment[]>()
+    payments.forEach((p) => {
+      const list = bySession.get(p.sessionId) ?? []
+      list.push(p)
+      bySession.set(p.sessionId, list)
+    })
+    const labels = new Map<string, string>()
+    bySession.forEach((list) => {
+      if (list.length < 2) return // 1回で払い切っていれば分割ではない
+      list
+        .slice()
+        .sort((a, b) => a.paymentDatetime.getTime() - b.paymentDatetime.getTime())
+        .forEach((p, i) => labels.set(p.id, `分割 ${i + 1}/${list.length}`))
+    })
+    return labels
+  })()
   const periodExpenses = expenses
     .filter((e) =>
       period === "day"
@@ -1058,6 +1078,7 @@ export function AdminReport({
                     <div className="space-y-3">
                       {periodPayments.map((payment) => {
                         const unsynced = !payment.canceledAt && !payment.syncedToSheetAt
+                        const splitLabel = splitLabelByPaymentId.get(payment.id)
                         return (
                         <div
                           key={payment.id}
@@ -1086,6 +1107,11 @@ export function AdminReport({
                                   ? "現金"
                                   : "クレペイ"}
                               </span>
+                              {splitLabel && (
+                                <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
+                                  {splitLabel}
+                                </span>
+                              )}
                               {unsynced && (
                                 <span className="rounded-full bg-destructive/20 px-2 py-0.5 text-xs font-medium text-destructive">
                                   未同期
