@@ -230,6 +230,8 @@ export function OrderSidebar({
   const [roundQty, setRoundQty] = useState<Record<string, number>>({})
   // 会計エリアは既定で畳み、オーダー内容の表示領域を優先する
   const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const checkoutSectionRef = useRef<HTMLButtonElement>(null)
   const [showSplitModal, setShowSplitModal] = useState(false)
   // 連結解除でオーダーを分けるモーダル。解除する席IDと、その席へ移す数量
   const [unlinkTargetId, setUnlinkTargetId] = useState<string | null>(null)
@@ -341,6 +343,22 @@ export function OrderSidebar({
     onResumeSplitHandled()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, session?.id, resumeSplit?.nonce])
+
+  // 会計セクションを開いたら、その見出しが上に来るまでスクロールする。
+  // スマホだと開いた中身が画面の下にはみ出して支払いボタンが見えないため
+  useEffect(() => {
+    if (!checkoutOpen) return
+    const scroller = scrollAreaRef.current
+    const header = checkoutSectionRef.current
+    if (!scroller || !header) return
+    const id = requestAnimationFrame(() => {
+      scroller.scrollTo({
+        top: scroller.scrollTop + header.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+        behavior: "smooth",
+      })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [checkoutOpen])
 
   // サイドバーが閉じたら Square 処理もキャンセル
   useEffect(() => {
@@ -902,7 +920,8 @@ export function OrderSidebar({
       {/* ── サイドバー ─────────────────────────────────────────────── */}
       <div
         className={cn(
-          "fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-border bg-card shadow-xl transition-transform duration-300",
+          // h-dvh: h-full(=100%)だとスマホでブラウザのバーの裏まで伸びて下端が触れなくなる
+          "fixed right-0 top-0 z-50 flex h-dvh w-full max-w-md flex-col border-l border-border bg-card shadow-xl transition-transform duration-300",
           isOpen ? "translate-x-0" : "translate-x-full",
         )}
       >
@@ -1002,8 +1021,9 @@ export function OrderSidebar({
           </div>
         )}
 
-        {/* 注文内容エリア */}
-        <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+        {/* 注文内容エリア。pb-24 は会計セクションを開いたときに最下部のボタンまで
+            余裕をもってスクロールできるようにするための余白 */}
+        <div ref={scrollAreaRef} className="min-h-0 flex-1 overflow-y-auto p-3 pb-24 sm:p-4 sm:pb-24">
           {/* オーダー追加ボタン */}
           <div className="mb-4">
             <div className="mb-2 flex items-center justify-between">
@@ -1215,6 +1235,7 @@ export function OrderSidebar({
 
           {/* 会計セクション（畳んでオーダー内容の表示領域を広く取る） */}
           <button
+            ref={checkoutSectionRef}
             onClick={() => setCheckoutOpen((v) => !v)}
             className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-left transition-colors hover:bg-muted"
           >
@@ -1570,7 +1591,7 @@ export function OrderSidebar({
       {/* ── 個別会計（分割会計）モーダル ────────────────────────────── */}
       {showSplitModal && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 sm:items-center">
-          <div className="flex max-h-[90vh] w-full max-w-md flex-col rounded-t-2xl bg-card shadow-2xl sm:mx-4 sm:rounded-2xl">
+          <div className="flex max-h-[90dvh] w-full max-w-md flex-col rounded-t-2xl bg-card shadow-2xl sm:mx-4 sm:rounded-2xl">
             {/* ヘッダー */}
             <div className="flex items-center justify-between border-b border-border p-4">
               <div className="flex items-center gap-2">
@@ -1704,7 +1725,7 @@ export function OrderSidebar({
       {/* ── 連結解除: 解除する席へ移すオーダーを選ぶ ─────────────────── */}
       {unlinkTargetId && (
         <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/50 sm:items-center">
-          <div className="flex max-h-[90vh] w-full max-w-md flex-col rounded-t-2xl bg-card shadow-2xl sm:mx-4 sm:rounded-2xl">
+          <div className="flex max-h-[90dvh] w-full max-w-md flex-col rounded-t-2xl bg-card shadow-2xl sm:mx-4 sm:rounded-2xl">
             <div className="flex items-center justify-between border-b border-border p-4">
               <div className="flex items-center gap-2">
                 <Link2 className="h-5 w-5 text-info" />
@@ -1885,7 +1906,7 @@ export function OrderSidebar({
 
           {/* モーダルパネル（ボトムシート） */}
           <div
-            className="flex max-h-[88vh] w-full flex-col rounded-t-2xl bg-card shadow-2xl"
+            className="flex max-h-[88dvh] w-full flex-col rounded-t-2xl bg-card shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             {/* モーダルヘッダー */}
