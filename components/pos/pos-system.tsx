@@ -1322,7 +1322,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
   }, [coupons, storeId])
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    // h-dvh: スマホのURLバーが出ている間も画面内に収まる高さにする（100vhだとバーの裏に隠れる）
+    <div className="flex h-dvh flex-col bg-background">
       {/* Header */}
       <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-card px-3 py-2 sm:px-4 sm:py-3">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
