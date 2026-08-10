@@ -230,8 +230,7 @@ export function OrderSidebar({
   const [roundQty, setRoundQty] = useState<Record<string, number>>({})
   // 会計エリアは既定で畳み、オーダー内容の表示領域を優先する
   const [checkoutOpen, setCheckoutOpen] = useState(false)
-  const scrollAreaRef = useRef<HTMLDivElement>(null)
-  const checkoutSectionRef = useRef<HTMLButtonElement>(null)
+  const checkoutAreaRef = useRef<HTMLDivElement>(null)
   const [showSplitModal, setShowSplitModal] = useState(false)
   // 連結解除でオーダーを分けるモーダル。解除する席IDと、その席へ移す数量
   const [unlinkTargetId, setUnlinkTargetId] = useState<string | null>(null)
@@ -344,20 +343,9 @@ export function OrderSidebar({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, session?.id, resumeSplit?.nonce])
 
-  // 会計セクションを開いたら、その見出しが上に来るまでスクロールする。
-  // スマホだと開いた中身が画面の下にはみ出して支払いボタンが見えないため
+  // 開き直したときに前回のスクロール位置が残って途中から表示されるのを防ぐ
   useEffect(() => {
-    if (!checkoutOpen) return
-    const scroller = scrollAreaRef.current
-    const header = checkoutSectionRef.current
-    if (!scroller || !header) return
-    const id = requestAnimationFrame(() => {
-      scroller.scrollTo({
-        top: scroller.scrollTop + header.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
-        behavior: "smooth",
-      })
-    })
-    return () => cancelAnimationFrame(id)
+    if (checkoutOpen) checkoutAreaRef.current?.scrollTo({ top: 0 })
   }, [checkoutOpen])
 
   // サイドバーが閉じたら Square 処理もキャンセル
@@ -1021,9 +1009,13 @@ export function OrderSidebar({
           </div>
         )}
 
-        {/* 注文内容エリア。pb-24 は会計セクションを開いたときに最下部のボタンまで
-            余裕をもってスクロールできるようにするための余白 */}
-        <div ref={scrollAreaRef} className="min-h-0 flex-1 overflow-y-auto p-3 pb-24 sm:p-4 sm:pb-24">
+        {/* 注文内容エリア。会計を開いている間は高さを譲って会計側を広く見せる */}
+        <div
+          className={cn(
+            "min-h-0 overflow-y-auto p-3 sm:p-4",
+            checkoutOpen ? "max-h-[28dvh] shrink-0" : "flex-1",
+          )}
+        >
           {/* オーダー追加ボタン */}
           <div className="mb-4">
             <div className="mb-2 flex items-center justify-between">
@@ -1171,8 +1163,15 @@ export function OrderSidebar({
           )}
         </div>
 
-        {/* 会計エリア */}
-        <div className="space-y-3 border-t border-border p-3 sm:p-4">
+        {/* 会計エリア。開いている間は残り高さいっぱいまで広げ、この中でスクロールさせる。
+            畳んでいるときは中身の高さのまま（従来どおり）下に置く */}
+        <div
+          ref={checkoutAreaRef}
+          className={cn(
+            "space-y-3 border-t border-border p-3 sm:p-4",
+            checkoutOpen && "min-h-0 flex-1 overflow-y-auto pb-8",
+          )}
+        >
           {/* 分割会計の進行状況。モーダルを閉じても続きが分かるようにする */}
           {splitMode && splitRounds !== null && (
             <div className="rounded-lg border border-info bg-info/10 p-2.5">
@@ -1235,7 +1234,6 @@ export function OrderSidebar({
 
           {/* 会計セクション（畳んでオーダー内容の表示領域を広く取る） */}
           <button
-            ref={checkoutSectionRef}
             onClick={() => setCheckoutOpen((v) => !v)}
             className="flex w-full items-center justify-between gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2.5 text-left transition-colors hover:bg-muted"
           >
