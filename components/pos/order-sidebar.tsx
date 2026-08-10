@@ -242,7 +242,6 @@ export function OrderSidebar({
   const [selectedCouponId, setSelectedCouponId] = useState<string>("")
   const [showCashlessModal, setShowCashlessModal] = useState(false)
   const [showPayPayQr, setShowPayPayQr] = useState(false)
-  const [cashReceived, setCashReceived] = useState<string>("")
   const [combinedMode, setCombinedMode] = useState(false)
   const [combinedCash, setCombinedCash] = useState<string>("")
   const [combinedCashless, setCombinedCashless] = useState<string>("")
@@ -264,7 +263,6 @@ export function OrderSidebar({
     setNoteText(session?.note ?? "")
     setCheckoutOpen(false)
     setSelectedCouponId("")
-    setCashReceived("")
     setCombinedMode(false)
     setCombinedCash("")
     setCombinedCashless("")
@@ -475,9 +473,6 @@ export function OrderSidebar({
   const totalAmount = selectedCoupon ? Math.floor(rawTotal / 100) * 100 : rawTotal
   const roundingDiscount = rawTotal - totalAmount
   const effectiveDiscountAmount = discountAmount + roundingDiscount
-
-  const cashReceivedNum = parseInt(cashReceived, 10) || 0
-  const change = cashReceivedNum - totalAmount
 
   const combinedCashNum = parseInt(combinedCash, 10) || 0
   const combinedCashlessNum = parseInt(combinedCashless, 10) || 0
@@ -892,7 +887,6 @@ export function OrderSidebar({
     setSplitRoundIndex(0)
     setShowSplitModal(false)
     setSelectedCouponId("")
-    setCashReceived("")
     setCombinedMode(false)
     setCombinedCash("")
     setCombinedCashless("")
@@ -909,7 +903,9 @@ export function OrderSidebar({
       <div
         className={cn(
           // h-dvh: h-full(=100%)だとスマホでブラウザのバーの裏まで伸びて下端が触れなくなる
-          "fixed right-0 top-0 z-50 flex h-dvh w-full max-w-md flex-col border-l border-border bg-card shadow-xl transition-transform duration-300",
+          "fixed right-0 top-0 z-50 flex h-dvh w-full flex-col border-l border-border bg-card shadow-xl transition-[transform,max-width] duration-300",
+          // 会計中は画面を占有して支払い操作に集中できるようにする
+          checkoutOpen ? "max-w-none" : "max-w-md",
           isOpen ? "translate-x-0" : "translate-x-full",
         )}
       >
@@ -1009,11 +1005,11 @@ export function OrderSidebar({
           </div>
         )}
 
-        {/* 注文内容エリア。会計を開いている間は高さを譲って会計側を広く見せる */}
+        {/* 注文内容エリア。会計を開いている間は隠して、その分を会計側に回す */}
         <div
           className={cn(
-            "min-h-0 overflow-y-auto p-3 sm:p-4",
-            checkoutOpen ? "max-h-[28dvh] shrink-0" : "flex-1",
+            "min-h-0 flex-1 overflow-y-auto p-3 sm:p-4",
+            checkoutOpen && "hidden",
           )}
         >
           {/* オーダー追加ボタン */}
@@ -1168,8 +1164,9 @@ export function OrderSidebar({
         <div
           ref={checkoutAreaRef}
           className={cn(
-            "space-y-3 border-t border-border p-3 sm:p-4",
-            checkoutOpen && "min-h-0 flex-1 overflow-y-auto pb-8",
+            "w-full space-y-3 border-t border-border p-3 sm:p-4",
+            // 全画面のときは中身が横に間延びしないよう、列幅を保ったまま中央に置く
+            checkoutOpen && "mx-auto min-h-0 max-w-md flex-1 overflow-y-auto pb-8",
           )}
         >
           {/* 分割会計の進行状況。モーダルを閉じても続きが分かるようにする */}
@@ -1372,30 +1369,6 @@ export function OrderSidebar({
 
           {squareState === "idle" && (!combinedMode ? (
             <>
-              <div className="flex items-center gap-2">
-                <Label className="whitespace-nowrap text-xs">預かり金</Label>
-                <div className="flex flex-1 items-center gap-1">
-                  <span className="text-sm">¥</span>
-                  <Input
-                    type="number"
-                    value={cashReceived}
-                    onChange={(e) => setCashReceived(e.target.value)}
-                    placeholder="0"
-                    className="h-8"
-                  />
-                </div>
-                {cashReceivedNum > 0 && (
-                  <div
-                    className={cn(
-                      "whitespace-nowrap text-sm font-bold",
-                      change >= 0 ? "text-success" : "text-destructive",
-                    )}
-                  >
-                    釣: ¥{change.toLocaleString()}
-                  </div>
-                )}
-              </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <Button
                   size="lg"
