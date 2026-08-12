@@ -1492,6 +1492,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
             storeId={storeId}
             blocks={blocks}
             payments={payments}
+            sessions={sessions}
             settings={settings}
             products={products}
             coupons={coupons}

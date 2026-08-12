@@ -5,12 +5,14 @@ import { cn } from "@/lib/utils"
 import type {
   Payment,
   ServiceBlock,
+  BlockSession,
   BusinessSettings,
   Product,
   Coupon,
   DiscountType,
   DailyExpense,
 } from "@/lib/pos-types"
+import { isHhTarget, HAPPY_HOUR_BASE, DRINK_CAP_PER_PERSON } from "@/lib/hh-calc"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input, inputVariants } from "@/components/ui/input"
@@ -40,6 +42,8 @@ import {
   Sheet,
   RefreshCw,
   LogOut,
+  Zap,
+  ChevronDown,
 } from "lucide-react"
 import { NumericKeypadSheet } from "@/components/ui/numeric-keypad"
 import { getBusinessDate } from "@/lib/pos-store"
@@ -55,6 +59,8 @@ interface AdminReportProps {
   storeId: number
   blocks: ServiceBlock[]
   payments: Payment[]
+  /** 会計履歴のオーダー内訳・ハッピーアワー適用有無を引くのに使う */
+  sessions: BlockSession[]
   settings: BusinessSettings
   products: Product[]
   coupons: Coupon[]
@@ -79,6 +85,118 @@ function paymentLabel(payment: Payment, blocks: ServiceBlock[]): string {
   ].join("")
   const suffix = payment.customerName?.trim() || timestamp
   return `${blockName} ${suffix}`
+}
+
+// ── 会計のオーダー内訳 ────────────────────────────────────────────────
+function PaymentBreakdown({
+  payment,
+  session,
+  sessionPaymentCount,
+  categoryMap,
+  taxRate,
+}: {
+  payment: Payment
+  session?: BlockSession
+  /** この伝票で有効な会計の件数。過去データのフォールバック判定に使う */
+  sessionPaymentCount: number
+  categoryMap: Record<string, string>
+  taxRate: number
+}) {
+  const happyHour = session?.happyHour ?? false
+
+  // 明細は会計時に paymentId で紐付く。paymentId を持たない過去データでも、
+  // その伝票の会計が1回だけなら支払済み明細がそのままこの会計の内訳になる
+  const matched = session?.orderItems.filter((i) => i.paymentId === payment.id) ?? []
+  const items =
+    matched.length > 0
+      ? matched
+      : sessionPaymentCount === 1
+      ? session?.orderItems.filter((i) => i.isPaid) ?? []
+      : []
+
+  return (
+    <div className="border-t border-border bg-muted/30 px-4 py-3">
+      {/* 適用有無をここでも明示する（バッジが無い＝未適用と読み取らせない） */}
+      <div className="mb-2 flex items-center gap-1.5 text-xs">
+        <Zap
+          className={cn("h-3.5 w-3.5 shrink-0", happyHour ? "text-orange-500" : "text-muted-foreground")}
+        />
+        <span className={happyHour ? "font-medium text-orange-500" : "text-muted-foreground"}>
+          {happyHour
+            ? `ハッピーアワー適用（¥${HAPPY_HOUR_BASE.toLocaleString()}/人・ドリンク¥${DRINK_CAP_PER_PERSON}/人まで）`
+            : "ハッピーアワー未適用"}
+        </span>
+      </div>
+
+      {items.length === 0 ? (
+        <p className="py-2 text-center text-xs text-muted-foreground">
+          {payment.canceledAt
+            ? "取消済のため、明細は伝票へ戻されています"
+            : "この会計の明細は記録されていません"}
+        </p>
+      ) : (
+        <div className="space-y-1">
+          {items.map((item) => {
+            // HH対象はHH基本料金に含まれるため、単品の金額は請求されていない
+            const hhCovered = happyHour && isHhTarget(item, categoryMap)
+            return (
+              <div key={item.id} className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="truncate text-sm">{item.name}</span>
+                    {hhCovered && (
+                      <span className="shrink-0 rounded bg-orange-500 px-1 py-0.5 text-[10px] font-bold text-white">
+                        HH
+                      </span>
+                    )}
+                    <span className="shrink-0 text-xs text-muted-foreground">×{item.quantity}</span>
+                  </div>
+                  {item.optionMemo && (
+                    <p className="text-[11px] text-muted-foreground">{item.optionMemo}</p>
+                  )}
+                </div>
+                <span
+                  className={cn(
+                    "shrink-0 text-xs text-muted-foreground",
+                    hhCovered && "line-through",
+                  )}
+                >
+                  ¥{item.subtotal.toLocaleString()}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <div className="mt-2 space-y-1 border-t border-border pt-2 text-sm">
+        <div className="flex justify-between text-muted-foreground">
+          <span>小計</span>
+          <span>¥{payment.subtotalAmount.toLocaleString()}</span>
+        </div>
+        {payment.discountAmount > 0 && (
+          <div className="flex justify-between text-warning">
+            <span>割引</span>
+            <span>−¥{payment.discountAmount.toLocaleString()}</span>
+          </div>
+        )}
+        <div className="flex justify-between text-muted-foreground">
+          <span>消費税 ({taxRate}%)</span>
+          <span>¥{payment.taxAmount.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between border-t border-border pt-1 font-bold">
+          <span>合計</span>
+          <span>¥{payment.totalAmount.toLocaleString()}</span>
+        </div>
+        {payment.cashAmount > 0 && payment.cashlessAmount > 0 && (
+          <p className="text-right text-xs text-muted-foreground">
+            現金 ¥{payment.cashAmount.toLocaleString()} / クレペイ ¥
+            {payment.cashlessAmount.toLocaleString()}
+          </p>
+        )}
+      </div>
+    </div>
+  )
 }
 
 // ── 商品マスタタブ ─────────────────────────────────────────────────────
@@ -793,6 +911,7 @@ export function AdminReport({
   storeId,
   blocks,
   payments,
+  sessions,
   settings,
   products,
   coupons,
@@ -810,6 +929,8 @@ export function AdminReport({
   const [selectedBusinessDate, setSelectedBusinessDate] = useState<string>("")
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<{ count: number; error?: string } | null>(null)
+  // タップで開いている会計履歴（オーダー内訳）
+  const [expandedPaymentId, setExpandedPaymentId] = useState<string | null>(null)
 
   const unsyncedCount = payments.filter((p) => !p.syncedToSheetAt && !p.canceledAt).length
 
@@ -913,6 +1034,15 @@ export function AdminReport({
     })
     return labels
   })()
+  // 会計履歴のオーダー内訳・HH判定に使う伝票の対応表
+  const sessionById = new Map(sessions.map((s) => [s.id, s]))
+  // 取消済みは無かった扱い。内訳のフォールバック（1回払いなら支払済み明細＝その会計）判定用
+  const paymentCountBySession = payments
+    .filter((p) => !p.canceledAt)
+    .reduce<Map<string, number>>((map, p) => map.set(p.sessionId, (map.get(p.sessionId) ?? 0) + 1), new Map())
+  // item.category が無い明細は商品マスタのカテゴリで HH 対象か判定する
+  const productCategoryMap = Object.fromEntries(products.map((p) => [p.id, p.category]))
+
   const periodExpenses = expenses
     .filter((e) => inPeriod(e.businessDate))
     .reduce((sum, e) => sum + e.amount, 0)
@@ -1120,16 +1250,35 @@ export function AdminReport({
                       {periodPayments.map((payment) => {
                         const unsynced = !payment.canceledAt && !payment.syncedToSheetAt
                         const splitLabel = splitLabelByPaymentId.get(payment.id)
+                        const session = sessionById.get(payment.sessionId)
+                        const happyHour = session?.happyHour ?? false
+                        const expanded = expandedPaymentId === payment.id
+                        const toggleExpand = () =>
+                          setExpandedPaymentId(expanded ? null : payment.id)
                         return (
                         <div
                           key={payment.id}
                           className={cn(
-                            "flex items-center justify-between rounded-lg border p-4",
+                            "overflow-hidden rounded-lg border",
                             unsynced
                               ? "border-destructive bg-destructive/5"
                               : "border-border",
                             payment.canceledAt && "opacity-50",
                           )}
+                        >
+                        {/* タップでオーダー内訳を開閉する */}
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={expanded}
+                          onClick={toggleExpand}
+                          onKeyDown={(e) => {
+                            if ((e.key === "Enter" || e.key === " ") && !isComposingEvent(e)) {
+                              e.preventDefault()
+                              toggleExpand()
+                            }
+                          }}
+                          className="flex cursor-pointer items-center justify-between gap-2 p-4 transition-colors hover:bg-muted/40"
                         >
                           <div className="flex-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -1151,6 +1300,12 @@ export function AdminReport({
                               {payment.isNewCustomer && (
                                 <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground">
                                   新規
+                                </span>
+                              )}
+                              {happyHour && (
+                                <span className="flex items-center gap-0.5 rounded-full bg-orange-500 px-2 py-0.5 text-xs font-bold text-white">
+                                  <Zap className="h-3 w-3" />
+                                  HH
                                 </span>
                               )}
                               {splitLabel && (
@@ -1176,7 +1331,7 @@ export function AdminReport({
                                 ` • 割引¥${payment.discountAmount.toLocaleString()}`}
                             </p>
                           </div>
-                          <div className="flex items-center gap-4">
+                          <div className="flex shrink-0 items-center gap-2 sm:gap-4">
                             <span className="text-lg font-bold">
                               ¥{payment.totalAmount.toLocaleString()}
                             </span>
@@ -1184,14 +1339,31 @@ export function AdminReport({
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => onCancelPayment(payment.id)}
+                                // 行タップの開閉と取消を取り違えないようにする
+                                onClick={(e) => { e.stopPropagation(); onCancelPayment(payment.id) }}
                                 className="text-warning hover:bg-warning/10 hover:text-warning"
                               >
                                 <Undo2 className="mr-1 h-4 w-4" />
                                 取消
                               </Button>
                             )}
+                            <ChevronDown
+                              className={cn(
+                                "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                                expanded && "rotate-180",
+                              )}
+                            />
                           </div>
+                        </div>
+                        {expanded && (
+                          <PaymentBreakdown
+                            payment={payment}
+                            session={session}
+                            sessionPaymentCount={paymentCountBySession.get(payment.sessionId) ?? 0}
+                            categoryMap={productCategoryMap}
+                            taxRate={settings.taxRate}
+                          />
+                        )}
                         </div>
                       )})}
                     </div>
