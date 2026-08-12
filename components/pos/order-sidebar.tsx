@@ -32,6 +32,7 @@ import {
   Link2,
   FileText,
   ShoppingCart,
+  Search,
   Zap,
   CheckCheck,
   Loader2,
@@ -60,6 +61,20 @@ import { loadSplitPlan, saveSplitPlan, clearSplitPlan } from "@/lib/split-checko
 
 /** 1品無料クーポンの減額上限。これを超える商品は上限まで、下回る商品は商品金額まで引く */
 const FREE_DRINK_MAX_DISCOUNT = 900
+
+/**
+ * 商品検索の表記ゆれを吸収する。
+ * 日本語キーボードだと全角英数で入ることがあり、カナは全角しか打てないため、
+ * 半角小文字・ひらがなに寄せてから部分一致で比べる。
+ */
+const normalizeSearch = (s: string) =>
+  s
+    .trim()
+    .toLowerCase()
+    // 全角英数 → 半角
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    // カタカナ → ひらがな
+    .replace(/[ァ-ヶ]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60))
 
 // 明細を数量単位で選ぶリスト。個別会計と連結解除の両方で使う
 function OrderItemSelectList({
@@ -224,6 +239,8 @@ export function OrderSidebar({
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({})
   const [openCategoryIds, setOpenCategoryIds] = useState<Set<string>>(new Set())
+  // オーダー追加モーダルの商品検索
+  const [productSearch, setProductSearch] = useState("")
   const [splitMode, setSplitMode] = useState(false)
   // 個別会計でこの回に含める数量（明細ID → 数量）。同じ商品がまとまった明細を
   // 数量単位で分けられるよう、ID の集合ではなく数量で持つ
@@ -388,6 +405,29 @@ export function OrderSidebar({
     return cats
   }, [activeProducts])
 
+  // オーダー追加モーダルの表示リスト。
+  // 検索は「カテゴリ名＋商品名」に対する部分一致。スペース区切りの語は全て含む
+  // ものだけを残す（語順は問わない）。カテゴリ名に一致すればその中は全部残る
+  const isSearching = normalizeSearch(productSearch).length > 0
+  const filteredOrderCategories = useMemo(() => {
+    const tokens = normalizeSearch(productSearch).split(/\s+/).filter(Boolean)
+    return sortedCategories
+      .map((catName) => ({
+        catName,
+        catProducts: activeProducts
+          .filter((p) => {
+            if (p.category !== catName) return false
+            if (tokens.length === 0) return true
+            const haystack = normalizeSearch(`${catName} ${p.name}`)
+            return tokens.every((t) => haystack.includes(t))
+          })
+          .sort((a, b) => a.displayOrder - b.displayOrder),
+      }))
+      .filter((c) => c.catProducts.length > 0)
+  // activeProducts は毎レンダー新しい配列になるため products を依存にする
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedCategories, products, productSearch])
+
   if (!selectedBlock) return null
 
   const unpaidItems = session?.orderItems.filter((i) => !i.isPaid) ?? []
@@ -506,12 +546,14 @@ export function OrderSidebar({
   // ── オーダー追加モーダル ──────────────────────────────────────────
   const handleOpenOrderModal = () => {
     setPendingCounts({})
+    setProductSearch("")
     setOpenCategoryIds(new Set(sortedCategories)) // 全カテゴリを展開
     setShowOrderModal(true)
   }
 
   const handleCloseOrderModal = () => {
     setPendingCounts({})
+    setProductSearch("")
     setShowOrderModal(false)
   }
 
@@ -1014,11 +1056,38 @@ export function OrderSidebar({
         >
           {/* オーダー追加ボタン */}
           <div className="mb-4">
-            <div className="mb-2 flex items-center justify-between">
-              <h3 className="font-semibold">注文内容</h3>
-              {totalOrderedQty > 0 && (
-                <span className="text-xs text-muted-foreground">{totalOrderedQty}点</span>
-              )}
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold">注文内容</h3>
+                {totalOrderedQty > 0 && (
+                  <span className="text-xs text-muted-foreground">{totalOrderedQty}点</span>
+                )}
+              </div>
+              {/* ハッピーアワーは注文中に切り替えたいので、会計を開かなくても
+                  ここで適用有無が分かるようにする */}
+              <Button
+                variant={happyHour ? "default" : "outline"}
+                size="sm"
+                aria-pressed={happyHour}
+                className={cn(
+                  "h-8 shrink-0 px-2.5 text-xs",
+                  happyHour
+                    ? "bg-amber-500 hover:bg-amber-500/90 text-white border-amber-500 font-bold"
+                    : "border-amber-400 text-amber-600 hover:bg-amber-50",
+                )}
+                onClick={() => {
+                  if (!happyHour && hasNightCharge) {
+                    setShowNightChargeWarning(true)
+                    return
+                  }
+                  onHappyHourChange(!happyHour)
+                }}
+              >
+                <Zap className={cn("mr-1 h-3.5 w-3.5", happyHour && "fill-white")} />
+                {happyHour
+                  ? `ハッピーアワー適用中 ¥${HAPPY_HOUR_BASE.toLocaleString()}/人`
+                  : "ハッピーアワー"}
+              </Button>
             </div>
             <button
               onClick={handleOpenOrderModal}
@@ -1261,27 +1330,7 @@ export function OrderSidebar({
           </button>
 
           {checkoutOpen && (<>
-          {/* ハッピーアワートグル */}
-          <Button
-            variant={happyHour ? "default" : "outline"}
-            size="sm"
-            className={cn(
-              "w-full",
-              happyHour
-                ? "bg-amber-500 hover:bg-amber-500/90 text-white border-amber-500"
-                : "border-amber-400 text-amber-600 hover:bg-amber-50",
-            )}
-            onClick={() => {
-              if (!happyHour && hasNightCharge) {
-                setShowNightChargeWarning(true)
-                return
-              }
-              onHappyHourChange(!happyHour)
-            }}
-          >
-            <Zap className={cn("mr-1.5 h-4 w-4", happyHour && "fill-white")} />
-            {happyHour ? `ハッピーアワー適用中 (¥${HAPPY_HOUR_BASE.toLocaleString()}/人)` : "ハッピーアワー"}
-          </Button>
+          {/* ハッピーアワーの切り替えは注文内容の横に集約した（会計側では出さない） */}
 
           <div className="flex flex-col gap-1">
             <select
@@ -1894,31 +1943,66 @@ export function OrderSidebar({
               </Button>
             </div>
 
+            {/* 商品検索 */}
+            <div className="shrink-0 border-b border-border px-4 py-2.5">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  // type="search" は iOS が独自のクリアボタンを出して二重になるため使わない
+                  type="text"
+                  inputMode="search"
+                  enterKeyHint="search"
+                  autoComplete="off"
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  placeholder="商品名・カテゴリで検索"
+                  // 検索欄なので変換確定の Enter でモーダルを閉じない
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !isComposingEvent(e)) e.preventDefault()
+                    if (e.key === "Escape") setProductSearch("")
+                  }}
+                  className="h-10 pl-9 pr-9"
+                />
+                {productSearch && (
+                  <button
+                    className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={() => setProductSearch("")}
+                    aria-label="検索をクリア"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            </div>
+
             {/* 商品グリッド */}
             <div className="min-h-0 flex-1 overflow-y-auto p-4">
               {sortedCategories.length === 0 ? (
                 <p className="py-12 text-center text-sm text-muted-foreground">
                   商品マスタに商品がありません
                 </p>
+              ) : filteredOrderCategories.length === 0 ? (
+                <p className="py-12 text-center text-sm text-muted-foreground">
+                  「{productSearch.trim()}」に一致する商品がありません
+                </p>
               ) : (
                 <div className="space-y-3">
-                  {sortedCategories.map((catName) => {
-                    const catProducts = activeProducts
-                      .filter((p) => p.category === catName)
-                      .sort((a, b) => a.displayOrder - b.displayOrder)
-                    if (catProducts.length === 0) return null
-                    const isCatOpen = openCategoryIds.has(catName)
-                    const catSelectedQty = catProducts.reduce(
-                      (s, p) => s + (pendingCounts[p.id] || 0),
+                  {filteredOrderCategories.map(({ catName, catProducts }) => {
+                    // 検索中は絞り込み結果がすぐ見えるよう、常に開いた状態で出す
+                    const isCatOpen = isSearching || openCategoryIds.has(catName)
+                    // 検索で隠れている商品の選択数も数える（バッジが減って見えないように）
+                    const catSelectedQty = activeProducts.reduce(
+                      (s, p) => (p.category === catName ? s + (pendingCounts[p.id] || 0) : s),
                       0,
                     )
 
                     return (
                       <div key={catName}>
-                        {/* カテゴリヘッダー */}
+                        {/* カテゴリヘッダー。検索中は畳めない（結果が見えなくなるため） */}
                         <button
                           className="flex w-full items-center justify-between rounded-lg bg-muted px-3 py-2.5 text-left transition-colors hover:bg-muted/70"
                           onClick={() => toggleCategory(catName)}
+                          disabled={isSearching}
                         >
                           <span className="font-semibold text-sm">{catName}</span>
                           <div className="flex items-center gap-2">
@@ -1927,11 +2011,12 @@ export function OrderSidebar({
                                 {catSelectedQty}点
                               </span>
                             )}
-                            {isCatOpen ? (
-                              <ChevronUp className="h-4 w-4 text-muted-foreground" />
-                            ) : (
-                              <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                            )}
+                            {!isSearching &&
+                              (isCatOpen ? (
+                                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                              ))}
                           </div>
                         </button>
 
