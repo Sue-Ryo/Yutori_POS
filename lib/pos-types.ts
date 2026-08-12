@@ -114,6 +114,12 @@ export interface Payment {
   squarePaymentId?: string
   /** 新規客の来店だったか。日報・スプレッドシートの新規集計に使う */
   isNewCustomer?: boolean
+  /**
+   * ハッピーアワーを適用した会計か。会計時に session からコピーする。
+   * session 側は下膳で false に戻る（stripGuestInfo）ため、履歴はこちらが正。
+   * 列追加前の古い会計は undefined になる
+   */
+  happyHour?: boolean
 }
 
 export interface LayoutElement {

@@ -556,6 +556,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
         squarePaymentId: data.squarePaymentId,
         // 新規客の集計用。Square 復帰時は CheckoutData 側の値が正
         isNewCustomer: data.isNewCustomer ?? session.isNewCustomer ?? false,
+        // 下膳で session.happyHour は落ちるため、会計時点の適用有無をここに残す
+        happyHour: session.happyHour ?? false,
       }
       // Square復帰直後はDB再読込と競合しうるため、ローカル更新時刻を先に記録して
       // 古い fetch 結果が会計後の状態を上書きしないようにする

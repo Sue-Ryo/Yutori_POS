@@ -91,19 +91,19 @@ function paymentLabel(payment: Payment, blocks: ServiceBlock[]): string {
 function PaymentBreakdown({
   payment,
   session,
+  happyHour,
   sessionPaymentCount,
   categoryMap,
   taxRate,
 }: {
   payment: Payment
   session?: BlockSession
+  happyHour: boolean
   /** この伝票で有効な会計の件数。過去データのフォールバック判定に使う */
   sessionPaymentCount: number
   categoryMap: Record<string, string>
   taxRate: number
 }) {
-  const happyHour = session?.happyHour ?? false
-
   // 明細は会計時に paymentId で紐付く。paymentId を持たない過去データでも、
   // その伝票の会計が1回だけなら支払済み明細がそのままこの会計の内訳になる
   const matched = session?.orderItems.filter((i) => i.paymentId === payment.id) ?? []
@@ -1251,7 +1251,9 @@ export function AdminReport({
                         const unsynced = !payment.canceledAt && !payment.syncedToSheetAt
                         const splitLabel = splitLabelByPaymentId.get(payment.id)
                         const session = sessionById.get(payment.sessionId)
-                        const happyHour = session?.happyHour ?? false
+                        // 会計に記録された値が正。列追加前の会計だけ伝票側を見る
+                        // （伝票は下膳で HH が落ちるため、片付け済みなら分からない）
+                        const happyHour = payment.happyHour ?? session?.happyHour ?? false
                         const expanded = expandedPaymentId === payment.id
                         const toggleExpand = () =>
                           setExpandedPaymentId(expanded ? null : payment.id)
@@ -1359,6 +1361,7 @@ export function AdminReport({
                           <PaymentBreakdown
                             payment={payment}
                             session={session}
+                            happyHour={happyHour}
                             sessionPaymentCount={paymentCountBySession.get(payment.sessionId) ?? 0}
                             categoryMap={productCategoryMap}
                             taxRate={settings.taxRate}
