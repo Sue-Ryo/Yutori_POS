@@ -1924,9 +1924,11 @@ export function OrderSidebar({
           {/* 背景オーバーレイ */}
           <div className="flex-1 bg-black/60" onClick={handleCloseOrderModal} />
 
-          {/* モーダルパネル（ボトムシート） */}
+          {/* モーダルパネル（ボトムシート）。
+              高さを固定しないと絞り込みや選択で中身が増減するたびに下端基準で
+              パネルが伸縮し、検索バーの位置が上下してしまう */}
           <div
-            className="flex max-h-[88dvh] w-full flex-col rounded-t-2xl bg-card shadow-2xl"
+            className="flex h-[88dvh] w-full flex-col rounded-t-2xl bg-card shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             {/* モーダルヘッダー */}
