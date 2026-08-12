@@ -25,6 +25,8 @@ export function rowToPayment(row: Record<string, unknown>): Payment {
     syncedToSheetAt: row.synced_to_sheet_at ? new Date(row.synced_to_sheet_at as string) : undefined,
     squarePaymentId: (row.square_payment_id as string | null) ?? undefined,
     isNewCustomer: (row.is_new_customer as boolean | null) ?? false,
+    // 列追加前の会計は NULL。false と区別して伝票側へフォールバックさせる
+    happyHour: (row.happy_hour as boolean | null) ?? undefined,
   }
 }
 
@@ -51,6 +53,7 @@ function paymentToRow(payment: Payment, storeId: number): Record<string, unknown
     synced_to_sheet_at: payment.syncedToSheetAt?.toISOString() ?? null,
     square_payment_id: payment.squarePaymentId ?? null,
     is_new_customer: payment.isNewCustomer ?? false,
+    happy_hour: payment.happyHour ?? false,
     store_id: storeId,
   }
 }
