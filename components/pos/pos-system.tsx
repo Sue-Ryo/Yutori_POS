@@ -33,9 +33,10 @@ import {
   revivers,
 } from "@/lib/pos-storage"
 import { supabase } from "@/lib/supabase"
-import { fetchProducts, createProduct, updateProduct, deleteProduct } from "@/lib/api/products"
+import { fetchProducts, createProduct, updateProduct, deleteProduct, updateProductOrders } from "@/lib/api/products"
 import { fetchBlocks, upsertBlocks, syncBlocks } from "@/lib/api/blocks"
 import { fetchSessions, upsertSessions } from "@/lib/api/sessions"
+import { changedOrders } from "@/lib/product-order"
 import { fetchPayments, upsertPayments } from "@/lib/api/payments-db"
 import { fetchSettings, upsertSettings } from "@/lib/api/settings-db"
 import { fetchCoupons, insertCoupon, updateCouponDb, deleteCoupon } from "@/lib/api/coupons-db"
@@ -1296,6 +1297,24 @@ export function POSSystem({ storeId }: { storeId: number }) {
     }
   }, [products])
 
+  // 並び替え専用。追加・削除・内容変更を伴わないので差分検出を通さず、
+  // 変わった display_order だけをまとめて書く
+  const handleReorderProducts = useCallback(async (reordered: Product[]) => {
+    const prev = products
+    const changed = changedOrders(prev, reordered)
+    if (changed.length === 0) return
+
+    setProducts(reordered) // 楽観的更新
+
+    try {
+      await updateProductOrders(changed, storeId)
+    } catch (err) {
+      console.error("商品並び替えエラー:", err)
+      setProducts(prev) // ロールバック
+      setDbError("並び順の保存に失敗しました")
+    }
+  }, [products, storeId])
+
   const handleUpdateCoupons = useCallback(async (newCoupons: Coupon[]) => {
     const prev = coupons
     const deleted = prev.filter((o) => !newCoupons.find((n) => n.id === o.id) && /^\d+$/.test(o.id))
@@ -1502,6 +1521,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
             onCancelPayment={handleCancelPayment}
             onUpdateSettings={setSettings}
             onUpdateProducts={handleUpdateProducts}
+            onReorderProducts={handleReorderProducts}
             onUpdateCoupons={handleUpdateCoupons}
             onMarkPaymentsSynced={handleMarkPaymentsSynced}
             onUpsertExpense={handleUpsertExpense}
