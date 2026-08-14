@@ -1,18 +1,30 @@
-export const HAPPY_HOUR_CATEGORIES = ["system", "システム", "drink", "ドリンク", "alcohol", "softdrink"]
+export const SYSTEM_CATEGORIES = ["system", "システム"]
 export const DRINK_CATEGORIES = ["drink", "ドリンク", "alcohol", "softdrink"]
+export const HAPPY_HOUR_CATEGORIES = [...SYSTEM_CATEGORIES, ...DRINK_CATEGORIES]
 export const HAPPY_HOUR_BASE = 3000
 export const DRINK_CAP_PER_PERSON = 600
-// system カテゴリ内で HH 対象外とする商品名（Shisha・Charge 以外）
-export const HH_EXCLUDED_NAMES = [
-  "Dark Leaf",
-  "Ice Hose",
-  "Top Exchange",
-  "Share",
-  "Alcohol Bottle",
-  "Juice Bottle",
-  "Night Charge",
-]
-export const NIGHT_CHARGE_NAME = "Night Charge"
+
+/**
+ * system カテゴリのうち HH 基本料金（¥3,000/人）に含まれる商品名。
+ * 店舗ごとに商品マスタが日本語／英語のどちらかなので両方を持つ。
+ *
+ * 「対象外」を列挙する方式は使わない。表記違い（アイスホース / Ice Hose）や
+ * 後から足した system 商品が列挙漏れになると基本料金に飲み込まれ、
+ * 請求漏れになるため。対象を列挙して、それ以外は実額請求に倒す。
+ */
+export const HH_SYSTEM_TARGET_NAMES = ["Shisha", "シーシャ", "Charge", "チャージ"]
+
+/** ナイトチャージ（HH と併用できない）の商品名 */
+export const NIGHT_CHARGE_NAMES = ["Night Charge", "ナイトチャージ"]
+
+const normalizeName = (name: string) => name.trim().toLowerCase()
+const HH_SYSTEM_TARGET_SET = new Set(HH_SYSTEM_TARGET_NAMES.map(normalizeName))
+const NIGHT_CHARGE_SET = new Set(NIGHT_CHARGE_NAMES.map(normalizeName))
+
+/** ナイトチャージの明細か（HH 適用の可否判定に使う） */
+export function isNightCharge(name: string): boolean {
+  return NIGHT_CHARGE_SET.has(normalizeName(name))
+}
 
 export type HhItem = {
   id: string
@@ -33,10 +45,14 @@ export function isHhTarget(
   item: Pick<HhItem, "productId" | "name" | "category">,
   categoryMap: Record<string, string>,
 ): boolean {
-  return (
-    HAPPY_HOUR_CATEGORIES.includes(resolveCategory(item, categoryMap)) &&
-    !HH_EXCLUDED_NAMES.includes(item.name)
-  )
+  const category = resolveCategory(item, categoryMap)
+  // system は指定商品（シーシャ・チャージ）だけが基本料金に含まれる。
+  // アイスホース・トップ替え・ダークリーフ等は別料金なので実額で請求する
+  if (SYSTEM_CATEGORIES.includes(category)) {
+    return HH_SYSTEM_TARGET_SET.has(normalizeName(item.name))
+  }
+  // ドリンクは全て対象。¥600/人の上限を超えた分だけ超過として加算される
+  return DRINK_CATEGORIES.includes(category)
 }
 
 /**
