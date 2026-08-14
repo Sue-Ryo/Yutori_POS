@@ -63,6 +63,29 @@ export async function updateProduct(id: string, updates: Partial<Omit<Product, "
   if (error) throw error
 }
 
+/**
+ * 表示順の一括保存。カテゴリごと動かすと数十件の display_order が同時に変わるため、
+ * 1件ずつの update ではなくまとめて upsert する。
+ * 追加直後でDBのidをまだ持たない商品（一時ID）は対象外（作成時に order を書いている）
+ */
+export async function updateProductOrders(products: Product[], storeId: number): Promise<void> {
+  const rows = products
+    .filter((p) => /^\d+$/.test(p.id))
+    .map((p) => ({
+      id: Number(p.id),
+      category: p.category,
+      item_name: p.name,
+      price_yen: p.price,
+      is_active: p.isActive,
+      display_order: p.displayOrder,
+      store_id: storeId,
+    }))
+  if (rows.length === 0) return
+
+  const { error } = await supabase.from("products").upsert(rows)
+  if (error) throw error
+}
+
 export async function deleteProduct(id: string, storeId: number): Promise<void> {
   const { error } = await supabase.from("products").delete().eq("id", Number(id)).eq("store_id", storeId)
   if (error) throw error

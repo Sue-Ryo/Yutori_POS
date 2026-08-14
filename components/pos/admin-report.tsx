@@ -13,6 +13,7 @@ import type {
   DailyExpense,
 } from "@/lib/pos-types"
 import { isHhTarget, HAPPY_HOUR_BASE, DRINK_CAP_PER_PERSON } from "@/lib/hh-calc"
+import { moveCategory, moveProduct } from "@/lib/product-order"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Input, inputVariants } from "@/components/ui/input"
@@ -44,6 +45,7 @@ import {
   LogOut,
   Zap,
   ChevronDown,
+  ChevronUp,
 } from "lucide-react"
 import { NumericKeypadSheet } from "@/components/ui/numeric-keypad"
 import { getBusinessDate } from "@/lib/pos-store"
@@ -68,6 +70,8 @@ interface AdminReportProps {
   onCancelPayment: (paymentId: string) => void
   onUpdateSettings: (settings: BusinessSettings) => void
   onUpdateProducts: (products: Product[]) => void
+  /** 表示順だけの更新。追加・削除の差分検出を通さず一括保存する */
+  onReorderProducts: (products: Product[]) => void
   onUpdateCoupons: (coupons: Coupon[]) => void
   onMarkPaymentsSynced: (ids: string[], syncedAt: Date) => void
   onUpsertExpense: (expense: DailyExpense) => Promise<void>
@@ -203,9 +207,11 @@ function PaymentBreakdown({
 function ProductsTab({
   products,
   onUpdateProducts,
+  onReorderProducts,
 }: {
   products: Product[]
   onUpdateProducts: (p: Product[]) => void
+  onReorderProducts: (p: Product[]) => void
 }) {
   const [editingProductId, setEditingProductId] = useState<string | null>(null)
   const [addingCategory, setAddingCategory] = useState<string | null>(null) // カテゴリ名
@@ -289,6 +295,14 @@ function ProductsTab({
     ? [...categoryNames, addingCategory]
     : categoryNames
 
+  // 並び替えはオーダー追加画面の表示順にそのまま反映される
+  const handleMoveCategory = (catName: string, direction: -1 | 1) => {
+    onReorderProducts(moveCategory(products, catName, direction))
+  }
+  const handleMoveProduct = (id: string, direction: -1 | 1) => {
+    onReorderProducts(moveProduct(products, id, direction))
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -332,16 +346,39 @@ function ProductsTab({
         </Card>
       )}
 
-      {displayCategories.map((catName) => {
+      {displayCategories.map((catName, catIndex) => {
         const catProducts = products
           .filter((p) => p.category === catName)
           .sort((a, b) => a.displayOrder - b.displayOrder)
+        // 追加中の新規カテゴリはまだ商品が無く並びを持たないので動かせない
+        const canMoveCategory = catProducts.length > 0
 
         return (
           <Card key={catName}>
             <CardHeader className="py-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">{catName}</CardTitle>
+                <div className="flex items-center gap-1">
+                  {/* カテゴリの並び替え。オーダー追加画面の表示順に反映される */}
+                  <div className="flex flex-col">
+                    <button
+                      className="text-muted-foreground disabled:opacity-25 hover:text-foreground"
+                      disabled={!canMoveCategory || catIndex === 0}
+                      onClick={() => handleMoveCategory(catName, -1)}
+                      aria-label={`${catName}を上へ`}
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                    </button>
+                    <button
+                      className="text-muted-foreground disabled:opacity-25 hover:text-foreground"
+                      disabled={!canMoveCategory || catIndex === categoryNames.length - 1}
+                      onClick={() => handleMoveCategory(catName, 1)}
+                      aria-label={`${catName}を下へ`}
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <CardTitle className="text-sm">{catName}</CardTitle>
+                </div>
                 <div className="flex gap-1">
                   <Button
                     variant="ghost"
@@ -406,7 +443,7 @@ function ProductsTab({
                   商品がありません
                 </p>
               )}
-              {catProducts.map((product) =>
+              {catProducts.map((product, productIndex) =>
                 editingProductId === product.id ? (
                   <EditProductRow
                     key={product.id}
@@ -422,6 +459,25 @@ function ProductsTab({
                       product.isActive ? "bg-muted/30" : "bg-muted/10 opacity-50",
                     )}
                   >
+                    {/* カテゴリ内の並び替え */}
+                    <div className="flex flex-col">
+                      <button
+                        className="text-muted-foreground disabled:opacity-25 hover:text-foreground"
+                        disabled={productIndex === 0}
+                        onClick={() => handleMoveProduct(product.id, -1)}
+                        aria-label={`${product.name}を上へ`}
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        className="text-muted-foreground disabled:opacity-25 hover:text-foreground"
+                        disabled={productIndex === catProducts.length - 1}
+                        onClick={() => handleMoveProduct(product.id, 1)}
+                        aria-label={`${product.name}を下へ`}
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                     <span className="flex-1 text-sm font-medium">{product.name}</span>
                     <span className="text-sm text-muted-foreground">
                       ¥{product.price.toLocaleString()}
@@ -919,6 +975,7 @@ export function AdminReport({
   onCancelPayment,
   onUpdateSettings,
   onUpdateProducts,
+  onReorderProducts,
   onUpdateCoupons,
   onMarkPaymentsSynced,
   onUpsertExpense,
@@ -1381,6 +1438,7 @@ export function AdminReport({
             <ProductsTab
               products={products}
               onUpdateProducts={onUpdateProducts}
+              onReorderProducts={onReorderProducts}
             />
           )}
 
