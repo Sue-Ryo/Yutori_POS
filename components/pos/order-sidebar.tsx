@@ -1978,7 +1978,7 @@ export function OrderSidebar({
             </div>
 
             {/* 商品グリッド */}
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
               {sortedCategories.length === 0 ? (
                 <p className="py-12 text-center text-sm text-muted-foreground">
                   商品マスタに商品がありません
@@ -1988,7 +1988,7 @@ export function OrderSidebar({
                   「{productSearch.trim()}」に一致する商品がありません
                 </p>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {filteredOrderCategories.map(({ catName, catProducts }) => {
                     // 検索中は絞り込み結果がすぐ見えるよう、常に開いた状態で出す
                     const isCatOpen = isSearching || openCategoryIds.has(catName)
@@ -2002,7 +2002,7 @@ export function OrderSidebar({
                       <div key={catName}>
                         {/* カテゴリヘッダー。検索中は畳めない（結果が見えなくなるため） */}
                         <button
-                          className="flex w-full items-center justify-between rounded-lg bg-muted px-3 py-2.5 text-left transition-colors hover:bg-muted/70"
+                          className="flex w-full items-center justify-between rounded-lg bg-muted px-3 py-2 text-left transition-colors hover:bg-muted/70"
                           onClick={() => toggleCategory(catName)}
                           disabled={isSearching}
                         >
@@ -2022,16 +2022,17 @@ export function OrderSidebar({
                           </div>
                         </button>
 
-                        {/* 商品カード */}
+                        {/* 商品カード。1画面に多く並べるため小さめ。
+                            タップ領域は min-h でおおよそ 56px 以上を確保する */}
                         {isCatOpen && (
-                          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                          <div className="mt-1.5 grid grid-cols-3 gap-1.5 sm:grid-cols-4 lg:grid-cols-5">
                             {catProducts.map((product) => {
                               const count = pendingCounts[product.id] || 0
                               return (
                                 <button
                                   key={product.id}
                                   className={cn(
-                                    "relative flex flex-col items-center justify-center rounded-xl border-2 px-2 py-4 text-center transition-all active:scale-95",
+                                    "relative flex min-h-14 flex-col items-center justify-center rounded-lg border px-1.5 py-2 text-center transition-all active:scale-95",
                                     count > 0
                                       ? "border-primary bg-primary/10 shadow-sm"
                                       : "border-border bg-background hover:bg-muted/60",
@@ -2040,14 +2041,14 @@ export function OrderSidebar({
                                 >
                                   {/* 選択数バッジ */}
                                   {count > 0 && (
-                                    <span className="absolute -right-2.5 -top-2.5 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground shadow">
+                                    <span className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground shadow">
                                       {count}
                                     </span>
                                   )}
-                                  <span className="text-sm font-semibold leading-tight">
+                                  <span className="text-xs font-semibold leading-tight">
                                     {product.name}
                                   </span>
-                                  <span className="mt-1.5 text-xs text-muted-foreground">
+                                  <span className="mt-0.5 text-[11px] text-muted-foreground">
                                     ¥{product.price.toLocaleString()}
                                   </span>
                                 </button>
