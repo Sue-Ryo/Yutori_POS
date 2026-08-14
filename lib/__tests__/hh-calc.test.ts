@@ -1,13 +1,32 @@
 import { describe, it, expect } from "vitest"
 import {
   isHhTarget,
+  isNightCharge,
   calcHhSubtotal,
   HAPPY_HOUR_BASE,
   DRINK_CAP_PER_PERSON,
-  HH_EXCLUDED_NAMES,
   splitRoundGuestCount,
   type HhItem,
 } from "../hh-calc"
+
+// system カテゴリで HH 基本料金に含まれない商品（別料金）。
+// 商品マスタは店舗によって英語／日本語なので両方を検証する
+const NON_HH_SYSTEM_NAMES = [
+  "Dark Leaf",
+  "Ice Hose",
+  "Top Exchange",
+  "Share",
+  "Alcohol Bottle",
+  "Juice Bottle",
+  "Night Charge",
+  "ダークリーフ",
+  "アイスホース",
+  "トップ替え",
+  "シェア",
+  "アルコールボトル",
+  "ジュースボトル",
+  "ナイトチャージ",
+]
 
 const CAT: Record<string, string> = {}
 
@@ -34,8 +53,21 @@ describe("isHhTarget", () => {
     expect(isHhTarget(item("Charge", "system", 500), CAT)).toBe(true)
   })
 
-  it.each(HH_EXCLUDED_NAMES)("%s (system) → HH対象外", (name) => {
+  // 日本語マスタの店舗（store 1）でHH対象が判定できていなかった回帰テスト
+  it("シーシャ (system) → HH対象", () => {
+    expect(isHhTarget(item("シーシャ", "system", 2800), CAT)).toBe(true)
+  })
+
+  it("チャージ (system) → HH対象", () => {
+    expect(isHhTarget(item("チャージ", "system", 500), CAT)).toBe(true)
+  })
+
+  it.each(NON_HH_SYSTEM_NAMES)("%s (system) → HH対象外", (name) => {
     expect(isHhTarget(item(name, "system", 800), CAT)).toBe(false)
+  })
+
+  it("列挙していない system 商品は対象外（請求漏れを防ぐ）", () => {
+    expect(isHhTarget(item("フレーバー追加", "system", 500), CAT)).toBe(false)
   })
 
   it("drink カテゴリ → HH対象", () => {
@@ -52,6 +84,17 @@ describe("isHhTarget", () => {
 
   it("未知カテゴリ → HH対象外", () => {
     expect(isHhTarget(item("Other", "food", 500), CAT)).toBe(false)
+  })
+})
+
+// ── isNightCharge ─────────────────────────────────────────────
+describe("isNightCharge", () => {
+  it.each(["Night Charge", "ナイトチャージ", " night charge "])("%s → true", (name) => {
+    expect(isNightCharge(name)).toBe(true)
+  })
+
+  it.each(["Charge", "チャージ", "Shisha"])("%s → false", (name) => {
+    expect(isNightCharge(name)).toBe(false)
   })
 })
 
@@ -85,6 +128,18 @@ describe("calcHhSubtotal", () => {
     const r = calcHhSubtotal(items, 1, CAT)
     expect(r.nonHhSubtotal).toBe(500)
     expect(r.subtotal).toBe(HAPPY_HOUR_BASE + 500)
+  })
+
+  // 日本語マスタの店舗で、system の別料金商品が¥3,000に飲み込まれていた回帰テスト
+  it("シーシャ + アイスホース + トップ替え(1名) → 別料金分が実額加算", () => {
+    const items = [
+      item("シーシャ", "system", 2800),
+      item("アイスホース", "system", 500),
+      item("トップ替え", "system", 1500),
+    ]
+    const r = calcHhSubtotal(items, 1, CAT)
+    expect(r.nonHhSubtotal).toBe(2000)
+    expect(r.subtotal).toBe(HAPPY_HOUR_BASE + 2000)
   })
 
   it("drink ¥600以下(1名) → 超過なし", () => {

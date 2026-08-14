@@ -44,7 +44,7 @@ import {
 import {
   HAPPY_HOUR_BASE,
   DRINK_CAP_PER_PERSON,
-  NIGHT_CHARGE_NAME,
+  isNightCharge,
   isHhTarget as hhIsTarget,
   calcHhSubtotal,
   resolveCategory,
@@ -467,7 +467,7 @@ export function OrderSidebar({
   // ハッピーアワー計算（item.category を優先、なければ productCategoryMap にフォールバック）
   const isHhTarget = (i: { name: string; productId: string; category?: string }) =>
     hhIsTarget(i, productCategoryMap)
-  const hasNightCharge = unpaidItems.some((i) => i.name === NIGHT_CHARGE_NAME)
+  const hasNightCharge = unpaidItems.some((i) => isNightCharge(i.name))
   // 分割会計では、その回が受け持つ人数ぶんだけHHを計算する。
   // 全回を足すと一括会計と同じ金額になるよう、端数は先の回から1名ずつ多く持たせ、
   // 残り全部を精算する回でまだ計上していない人数をまとめて引き受ける。
