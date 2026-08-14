@@ -64,16 +64,16 @@ import { loadSplitPlan, saveSplitPlan, clearSplitPlan } from "@/lib/split-checko
 const FREE_DRINK_MAX_DISCOUNT = 900
 
 /**
- * ドリンクの価格帯ごとの色。金額が上がるほど寒色→暖色になる。
- * 一覧から目当ての価格帯をすぐ拾えるようにするための目印で、
- * 未選択のカードにだけ着く（選択中は選択の色を優先する）
+ * ドリンクの価格帯ごとの枠線色。金額が上がるほど寒色→暖色になる。
+ * 背景は塗らない。このアプリは常時ダークテーマ（.dark クラスは付かないので
+ * dark: バリアントも効かない）で、明るい塗りだと商品名が読めなくなるため
  */
 const DRINK_PRICE_BANDS: { max: number; className: string }[] = [
-  { max: 600, className: "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/40" },
-  { max: 700, className: "border-sky-400 bg-sky-50 dark:bg-sky-950/40" },
-  { max: 900, className: "border-amber-400 bg-amber-50 dark:bg-amber-950/40" },
-  { max: 1499, className: "border-orange-400 bg-orange-50 dark:bg-orange-950/40" },
-  { max: Infinity, className: "border-rose-400 bg-rose-50 dark:bg-rose-950/40" },
+  { max: 600, className: "border-emerald-400" },
+  { max: 700, className: "border-sky-400" },
+  { max: 900, className: "border-amber-400" },
+  { max: 1499, className: "border-orange-400" },
+  { max: Infinity, className: "border-rose-400" },
 ]
 
 /** ドリンク以外は色分けしない（システム商品などは金額の幅が別物のため） */
@@ -2053,11 +2053,12 @@ export function OrderSidebar({
                                 <button
                                   key={product.id}
                                   className={cn(
-                                    "relative flex min-h-14 flex-col items-center justify-center rounded-lg border px-1.5 py-2 text-center transition-all active:scale-95",
-                                    // 選択中は選択の色だけにする（価格帯の色と混ざらないように）
+                                    "relative flex min-h-14 flex-col items-center justify-center rounded-lg border bg-background px-1.5 py-2 text-center transition-all active:scale-95",
+                                    // 価格帯の色は枠線のみ。色付きは2pxにして細くても分かるようにする
+                                    priceClass && "border-2",
                                     count > 0
                                       ? "border-primary bg-primary/10 shadow-sm"
-                                      : cn(priceClass ?? "border-border bg-background", "hover:bg-muted/60"),
+                                      : cn(priceClass ?? "border-border", "hover:bg-muted/60"),
                                   )}
                                   onClick={() => handlePendingAdd(product.id)}
                                 >
