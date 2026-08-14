@@ -1,6 +1,13 @@
 import { describe, it, expect } from "vitest"
 import type { Product } from "../pos-types"
-import { groupByCategory, moveProduct, moveCategory, changedOrders } from "../product-order"
+import {
+  groupByCategory,
+  moveProduct,
+  moveCategory,
+  setProductOrder,
+  setCategoryOrder,
+  changedOrders,
+} from "../product-order"
 
 const product = (id: string, category: string, displayOrder: number): Product => ({
   id,
@@ -98,6 +105,39 @@ describe("moveCategory", () => {
     const three = [...base, product("f1", "food", 6)]
     expect(groupByCategory(moveCategory(three, "food", -1)).map((b) => b.category))
       .toEqual(["system", "food", "drink"])
+  })
+})
+
+describe("setProductOrder（ドラッグ&ドロップ）", () => {
+  it("指定カテゴリ内を指定の順に並べ替える", () => {
+    expect(order(setProductOrder(base, "drink", ["d3", "d1", "d2"])))
+      .toEqual(["s1", "s2", "d3", "d1", "d2"])
+  })
+
+  it("他カテゴリの並びは変わらない", () => {
+    const next = setProductOrder(base, "drink", ["d3", "d2", "d1"])
+    expect(groupByCategory(next)[0].products.map((p) => p.id)).toEqual(["s1", "s2"])
+  })
+
+  it("渡されなかった商品は末尾に残る", () => {
+    expect(order(setProductOrder(base, "drink", ["d3"]))).toEqual(["s1", "s2", "d3", "d1", "d2"])
+  })
+
+  it("知らないカテゴリなら何もしない", () => {
+    expect(setProductOrder(base, "zzz", ["d1"])).toBe(base)
+  })
+})
+
+describe("setCategoryOrder（ドラッグ&ドロップ）", () => {
+  it("カテゴリを指定の順に並べ替える", () => {
+    expect(order(setCategoryOrder(base, ["drink", "system"])))
+      .toEqual(["d1", "d2", "d3", "s1", "s2"])
+  })
+
+  it("渡されなかったカテゴリは末尾に残る", () => {
+    const three = [...base, product("f1", "food", 6)]
+    expect(groupByCategory(setCategoryOrder(three, ["food"])).map((b) => b.category))
+      .toEqual(["food", "system", "drink"])
   })
 })
 
