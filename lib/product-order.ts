@@ -79,6 +79,42 @@ export function moveCategory(products: Product[], category: string, direction: -
   return flatten(swap(blocks, from, to))
 }
 
+/**
+ * 指定カテゴリ内の並びを orderedIds の順に置き換える（ドラッグ&ドロップ用）。
+ * orderedIds に含まれない商品は末尾に残す（取りこぼし防止）
+ */
+export function setProductOrder(
+  products: Product[],
+  category: string,
+  orderedIds: string[],
+): Product[] {
+  const blocks = groupByCategory(products)
+  if (!blocks.some((b) => b.category === category)) return products
+
+  return flatten(
+    blocks.map((block) => {
+      if (block.category !== category) return block
+      const byId = new Map(block.products.map((p) => [p.id, p]))
+      const moved = orderedIds
+        .map((id) => byId.get(id))
+        .filter((p): p is Product => p !== undefined)
+      const rest = block.products.filter((p) => !orderedIds.includes(p.id))
+      return { ...block, products: [...moved, ...rest] }
+    }),
+  )
+}
+
+/** カテゴリの並びを orderedCategories の順に置き換える（ドラッグ&ドロップ用） */
+export function setCategoryOrder(products: Product[], orderedCategories: string[]): Product[] {
+  const blocks = groupByCategory(products)
+  const byCategory = new Map(blocks.map((b) => [b.category, b]))
+  const moved = orderedCategories
+    .map((c) => byCategory.get(c))
+    .filter((b): b is CategoryBlock => b !== undefined)
+  const rest = blocks.filter((b) => !orderedCategories.includes(b.category))
+  return flatten([...moved, ...rest])
+}
+
 /** 並び替えで displayOrder が変わった商品だけを返す（保存対象の絞り込み用） */
 export function changedOrders(prev: Product[], next: Product[]): Product[] {
   const prevById = new Map(prev.map((p) => [p.id, p.displayOrder]))
