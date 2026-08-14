@@ -74,6 +74,26 @@ export async function upsertPayments(payments: Payment[], storeId: number): Prom
   if (error) throw error
 }
 
+/** 会計の取消。台帳保護のため、upsert ではなく取消列だけの更新にする */
+export async function cancelPaymentDb(
+  id: string,
+  canceledAt: Date,
+  reason?: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("payments")
+    .update({ canceled_at: canceledAt.toISOString(), cancel_reason: reason ?? null })
+    .eq("id", id)
+  if (error) throw error
+}
+
+/** 取消できる期間。DB 側（payments_guard）と同じ日数にすること */
+export const CANCELABLE_DAYS = 7
+
+export function isCancelable(paymentDatetime: Date, now: Date = new Date()): boolean {
+  return now.getTime() - paymentDatetime.getTime() <= CANCELABLE_DAYS * 24 * 60 * 60 * 1000
+}
+
 export async function markPaymentsSynced(ids: string[]): Promise<void> {
   if (ids.length === 0) return
   const { error } = await supabase

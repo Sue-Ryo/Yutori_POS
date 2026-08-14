@@ -37,7 +37,7 @@ import { fetchProducts, createProduct, updateProduct, deleteProduct, updateProdu
 import { fetchBlocks, upsertBlocks, syncBlocks } from "@/lib/api/blocks"
 import { fetchSessions, upsertSessions } from "@/lib/api/sessions"
 import { changedOrders } from "@/lib/product-order"
-import { fetchPayments, upsertPayments } from "@/lib/api/payments-db"
+import { fetchPayments, upsertPayments, cancelPaymentDb } from "@/lib/api/payments-db"
 import { fetchSettings, upsertSettings } from "@/lib/api/settings-db"
 import { fetchCoupons, insertCoupon, updateCouponDb, deleteCoupon } from "@/lib/api/coupons-db"
 import { fetchLayoutElements, upsertLayoutElements } from "@/lib/api/layout-db"
@@ -839,11 +839,15 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
       const now = new Date()
 
-      // Payment に取消フラグ
+      // Payment に取消フラグ。台帳保護のため取消列だけを更新する
       setPayments((prev) =>
         prev.map((p) => (p.id === paymentId ? { ...p, canceledAt: now } : p))
       )
-      upsertPayments([{ ...payment, canceledAt: now }], storeId).catch((e) => console.error("[DB]payments cancel:", e))
+      cancelPaymentDb(paymentId, now).catch((e) => {
+        console.error("[DB]payments cancel:", e)
+        setPayments((prev) => prev.map((p) => (p.id === paymentId ? payment : p)))
+        setDbError("会計の取消に失敗しました（7日を過ぎた会計は取り消せません）")
+      })
 
       // セッションの明細を未払いに戻す
       const cancelSession = sessions.find((s) => s.id === payment.sessionId)
