@@ -129,6 +129,27 @@ export function POSSystem({ storeId }: { storeId: number }) {
       }
       if (dbBlocks !== null && !staleForLocalWrites) setBlocks(markFromStore(dbBlocks))
       if (dbSessions !== null && !staleForLocalWrites) setSessions(dbSessions)
+      // 空席なのに終了していないセッション（孤児）を掃除する。
+      // 席を開くまで残り続け、次の客に顧客名・HH・入店時間が引き継がれてしまうため。
+      // 未会計のオーダーが残っているものは席のステータス側が壊れている可能性があるので触らない。
+      if (dbSessions !== null && dbBlocks !== null && !staleForLocalWrites) {
+        const statusById = new Map(dbBlocks.map((b) => [b.id, b.status]))
+        const orphans = dbSessions.filter(
+          (s) =>
+            !s.endedAt &&
+            statusById.get(s.blockId) === "empty" &&
+            !s.orderItems.some((i) => !i.isPaid),
+        )
+        if (orphans.length > 0) {
+          const sweptAt = new Date()
+          const swept = orphans.map((s) => stripGuestInfo({ ...s, endedAt: sweptAt }))
+          const sweptById = new Map(swept.map((s) => [s.id, s]))
+          setSessions((prev) => prev.map((s) => sweptById.get(s.id) ?? s))
+          lastLocalWriteRef.current = Date.now()
+          upsertSessions(swept, storeId).catch((e) => console.error("[DB]sessions orphan sweep:", e))
+          console.log("[POSSystem] 空席に残っていたセッションを終了:", orphans.length, "件")
+        }
+      }
       if (dbPayments !== null && !staleForLocalWrites) {
         if (dbPayments.length > 0) {
           // DB にデータあり → DB を正とする
@@ -313,6 +334,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
     if (currentSession) {
       const updated = { ...currentSession, happyHour: value }
       setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+      lastLocalWriteRef.current = Date.now()
       upsertSessions([updated], storeId).catch((e) => console.error("[DB]sessions happyHour:", e))
     }
   }, [selectedBlockId, currentSession])
@@ -336,6 +358,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
     if (currentSession) {
       const updated = { ...currentSession, customerName: name }
       setSessions((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+      lastLocalWriteRef.current = Date.now()
       upsertSessions([updated], storeId).catch((e) => console.error("[DB]sessions customerName:", e))
     }
   }, [selectedBlockId, currentSession])
@@ -386,32 +409,48 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
   const bussingById = useCallback((blockId: string) => {
     const now = new Date()
-    // 同一blockIdのセッションが過去分含め複数存在するため、最新のendedAtを持つものを選ぶ
-    const endedSession = sessions
-      .filter(
-        (s) =>
-          (s.blockId === blockId || (s.linkedBlockIds ?? []).includes(blockId)) &&
-          s.endedAt,
-      )
-      .sort((a, b) => b.endedAt!.getTime() - a.endedAt!.getTime())[0]
-    // endedAt なしのゴーストセッションも検出して終了させる（DB 未同期の古いセッション対策）
-    const ghostSession = sessions.find(
-      (s) =>
-        (s.blockId === blockId || (s.linkedBlockIds ?? []).includes(blockId)) &&
-        !s.endedAt,
+    // この席に関係するセッションを集める（同一blockIdのセッションは過去分含め複数存在する）
+    const related = sessions.filter(
+      (s) => s.blockId === blockId || (s.linkedBlockIds ?? []).includes(blockId),
     )
-    if (ghostSession) {
-      const endedGhost = stripGuestInfo({ ...ghostSession, endedAt: now })
-      setSessions((prev) => prev.map((s) => (s.id === ghostSession.id ? endedGhost : s)))
-      upsertSessions([endedGhost], storeId).catch((e) => console.error("[DB]sessions bussing ghost:", e))
-    }
+    // endedAt なしのゴーストセッション（DB 未同期の古いセッション対策）。
+    // 複数残っていることがあるため find ではなく全件を対象にする。
+    const ghostSessions = related.filter((s) => !s.endedAt)
+    const latestEnded = related
+      .filter((s) => s.endedAt)
+      .sort((a, b) => b.endedAt!.getTime() - a.endedAt!.getTime())[0]
+
     // 現在の連結構成はアクティブなセッションが持つため、あればそちらを優先する。
-    // （終了済みセッションは前の組の連結情報なので、別の組を巻き込んで空席化しかねない）
-    const allBlockIds = ghostSession
-      ? [ghostSession.blockId, ...(ghostSession.linkedBlockIds ?? [])]
-      : endedSession
-      ? [endedSession.blockId, ...(endedSession.linkedBlockIds ?? [])]
-      : [blockId]
+    const linkedFromGhosts = ghostSessions.flatMap((s) => [s.blockId, ...(s.linkedBlockIds ?? [])])
+    // アクティブ側に連結情報が無いときは、直前に会計されたグループの構成で補う。
+    // ただし終了済みセッションは前の組の連結情報であることがあり、別の組を巻き込んで
+    // 空席化しかねないため、まだ会計済み(checked_out)のままの席だけを対象にする。
+    const blockStatusById = new Map(blocks.map((b) => [b.id, b.status]))
+    const linkedFromEnded =
+      latestEnded && !ghostSessions.some((s) => s.linkedBlockIds?.length)
+        ? [latestEnded.blockId, ...(latestEnded.linkedBlockIds ?? [])].filter(
+            (id) => id === blockId || blockStatusById.get(id) === "checked_out",
+          )
+        : []
+    const allBlockIds = Array.from(
+      new Set([blockId, ...linkedFromGhosts, ...linkedFromEnded]),
+    )
+
+    // ゴーストは終了させ、終了済みセッションからも接客情報を落とす。
+    // endedAt の同期に失敗した場合でも、次の客に顧客名・備考・HH が復活しないようにする。
+    const toClean = [
+      ...ghostSessions,
+      ...(latestEnded && hasGuestInfo(latestEnded) ? [latestEnded] : []),
+    ]
+    if (toClean.length > 0) {
+      const cleaned = toClean.map((s) => stripGuestInfo({ ...s, endedAt: s.endedAt ?? now }))
+      const cleanedById = new Map(cleaned.map((s) => [s.id, s]))
+      setSessions((prev) => prev.map((s) => cleanedById.get(s.id) ?? s))
+      // 掃除の直後に再取得が走ると、DB 反映前の古い行で巻き戻されるため印を付ける
+      lastLocalWriteRef.current = Date.now()
+      upsertSessions(cleaned, storeId).catch((e) => console.error("[DB]sessions bussing:", e))
+    }
+
     setBlocks((prev) =>
       prev.map((b) =>
         allBlockIds.includes(b.id)
@@ -419,13 +458,6 @@ export function POSSystem({ storeId }: { storeId: number }) {
           : b,
       ),
     )
-    // 終了済みセッションからも接客情報を落とす。
-    // endedAt の同期に失敗した場合でも、次の客に顧客名・備考・HH が復活しないようにする。
-    if (endedSession && hasGuestInfo(endedSession)) {
-      const cleaned = stripGuestInfo(endedSession)
-      setSessions((prev) => prev.map((s) => (s.id === cleaned.id ? cleaned : s)))
-      upsertSessions([cleaned], storeId).catch((e) => console.error("[DB]sessions bussing clear:", e))
-    }
 
     // 空席化した席の分割会計は途中でも無効になるため進捗を捨てる
     const plan = loadSplitPlan(storeId)
@@ -447,7 +479,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
       allBlockIds.forEach((id) => delete next[id])
       return next
     })
-  }, [sessions])
+  }, [sessions, blocks])
 
   const handleBussingComplete = useCallback(() => {
     if (!selectedBlockId) return
