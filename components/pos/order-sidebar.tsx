@@ -976,16 +976,29 @@ export function OrderSidebar({
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-bold shrink-0">{selectedBlock.name}</h2>
-              <ImeInput
-                value={customerName}
-                onValueChange={onCustomerNameChange}
-                enterKeyHint="done"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !isComposingEvent(e)) e.currentTarget.blur()
-                }}
-                placeholder="顧客名"
-                className="min-w-0 flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground/40 outline-none border-b border-border/50 focus:border-primary"
-              />
+              <div className="flex min-w-0 flex-1 items-center border-b border-border/50 focus-within:border-primary">
+                <ImeInput
+                  value={customerName}
+                  onValueChange={onCustomerNameChange}
+                  enterKeyHint="done"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !isComposingEvent(e)) e.currentTarget.blur()
+                  }}
+                  placeholder="顧客名"
+                  className="min-w-0 flex-1 bg-transparent text-base text-foreground placeholder:text-muted-foreground/40 outline-none"
+                />
+                {/* 前の客の名前が残っていた場合にその場で消せるようにする */}
+                {customerName.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onCustomerNameChange("")}
+                    aria-label="顧客名をクリア"
+                    className="ml-1 shrink-0 rounded p-1 text-muted-foreground/60 hover:bg-muted hover:text-foreground active:scale-95"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               {/* 空席の席に前の客の入店時間が残って見えないようにする */}
