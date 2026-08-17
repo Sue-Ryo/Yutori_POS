@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { cn } from "@/lib/utils"
 import type { ServiceBlock, BlockSession, LayoutElement } from "@/lib/pos-types"
 import { formatElapsed } from "@/lib/pos-store"
@@ -76,19 +76,42 @@ export function FloorMap({
   }, [])
 
   // 連結情報を事前計算
-  // バッシング完了（empty）まで連結表示を維持する：会計済み(endedAt あり)でもプライマリブロックが checked_out なら連結扱い
-  const linkedSecondaryIds = new Set<string>()
-  const primaryWithLinkIds = new Set<string>()
-  sessions
-    .filter((s) => {
-      if (!s.linkedBlockIds || s.linkedBlockIds.length === 0) return false
-      if (!s.endedAt) return true
-      return blocks.find((b) => b.id === s.blockId)?.status === "checked_out"
-    })
-    .forEach((s) => {
-      primaryWithLinkIds.add(s.blockId)
-      s.linkedBlockIds!.forEach((id) => linkedSecondaryIds.add(id))
-    })
+  // バッシング完了（empty）まで連結表示を維持するため、会計済み(endedAt あり)のセッションも参照する。
+  // ただし sessions には同じ席の過去セッションが全件入っており、終了済みセッションが持つのは
+  // 「前の組」の連結情報。プライマリ席の現在ステータスだけで採否を決めると、その席が checked_out に
+  // なった瞬間に何日も前の連結相手が「連結中」として復活してしまう。そのため
+  //   1) その席の最新セッションであること
+  //   2) 連結先も未バッシング(checked_out)で、自前のアクティブセッションを持たないこと
+  // を満たすものだけを採用する。
+  const { linkedSecondaryIds, primaryWithLinkIds } = useMemo(() => {
+    const secondary = new Set<string>()
+    const primary = new Set<string>()
+    const statusOf = (id: string) => blocks.find((b) => b.id === id)?.status
+    const activeBlockIds = new Set(sessions.filter((s) => !s.endedAt).map((s) => s.blockId))
+
+    // 席ごとに最新の終了済みセッションだけを残す
+    const latestEnded = new Map<string, BlockSession>()
+    for (const s of sessions) {
+      if (!s.endedAt) continue
+      const cur = latestEnded.get(s.blockId)
+      if (!cur || s.endedAt.getTime() > cur.endedAt!.getTime()) latestEnded.set(s.blockId, s)
+    }
+
+    for (const s of [...sessions.filter((s) => !s.endedAt), ...latestEnded.values()]) {
+      if (!s.linkedBlockIds?.length) continue
+      let secondaries = s.linkedBlockIds
+      if (s.endedAt) {
+        if (statusOf(s.blockId) !== "checked_out") continue
+        secondaries = secondaries.filter(
+          (id) => statusOf(id) === "checked_out" && !activeBlockIds.has(id),
+        )
+      }
+      if (secondaries.length === 0) continue
+      primary.add(s.blockId)
+      secondaries.forEach((id) => secondary.add(id))
+    }
+    return { linkedSecondaryIds: secondary, primaryWithLinkIds: primary }
+  }, [sessions, blocks])
 
   // 新規客が入っている席（プライマリ・連結先どちらにも印を出す）
   const newCustomerBlockIds = new Set<string>()
