@@ -82,6 +82,9 @@ export function POSSystem({ storeId }: { storeId: number }) {
   const [dbLoading, setDbLoading] = useState(false)
   // DBからの初回読み込みが完了したか（未完了時は sessions がデモ初期値のため判定に使えない）
   const [dbLoaded, setDbLoaded] = useState(false)
+  // 設定の書き戻しガード用。state だと effect の依存に入れる必要があり、
+  // true になった瞬間に初期値を書き込んでしまうため ref で持つ
+  const dbLoadedRef = useRef(false)
   const [dbError, setDbError] = useState<string | null>(null)
   // DB / localStorage から取り込んだ配列・オブジェクトそのものに印を付ける。
   // 印の付いた値が state に入っているうちは外部由来なのでDBへ書き戻さない。
@@ -159,6 +162,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
     } finally {
       setDbLoading(false)
       setDbLoaded(true)
+      dbLoadedRef.current = true
       // localStorage にあった会計データを DB へ移行
       if (shouldMigratePayments && paymentsRef.current.length > 0) {
         console.log("[DB]payments migrate:", paymentsRef.current.length, "件をDBへ書き込み")
@@ -258,7 +262,10 @@ export function POSSystem({ storeId }: { storeId: number }) {
     upsertLayoutElements(layoutElements, storeId).catch((e) => console.error("[DB]layout:", e))
   }, [layoutElements])
   useEffect(() => {
-    if (!initializedRef.current || fromStoreRef.current.has(settings)) return
+    // DB読み込みが終わる前は settings が初期値のままなので、書き戻すと本番の
+    // 店舗設定を初期値で潰してしまう（実際に店舗名と営業開始時刻が壊れた）
+    if (!initializedRef.current || !dbLoadedRef.current) return
+    if (fromStoreRef.current.has(settings)) return
     upsertSettings(storeId, settings).catch((e) => console.error("[DB]settings:", e))
   }, [settings])
 
