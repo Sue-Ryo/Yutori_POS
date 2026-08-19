@@ -299,6 +299,31 @@ export function POSSystem({ storeId }: { storeId: number }) {
   const [happyHourByBlock, setHappyHourByBlock] = useState<Record<string, boolean>>({})
   const [newCustomerByBlock, setNewCustomerByBlock] = useState<Record<string, boolean>>({})
   const [customerNames, setCustomerNames] = useState<Record<string, string>>({})
+
+  // 他端末で空席化された席のローカルキャッシュを破棄する。
+  // 顧客名・HH・新規客のキャッシュは端末ごとに持つため、他端末でのバッシングでは消えず、
+  // 空席になった席に前の客の顧客名が残って見えてしまう。
+  // 「空席のまま顧客名だけ先に入力しておく」運用を壊さないよう、
+  // 非空席から空席へ変化した席だけを対象にする。
+  const prevBlockStatusRef = useRef<Record<string, ServiceBlock["status"]>>({})
+  useEffect(() => {
+    const prevStatus = prevBlockStatusRef.current
+    const justEmptied = blocks
+      .filter((b) => b.status === "empty" && prevStatus[b.id] && prevStatus[b.id] !== "empty")
+      .map((b) => b.id)
+    prevBlockStatusRef.current = Object.fromEntries(blocks.map((b) => [b.id, b.status]))
+    if (justEmptied.length === 0) return
+    // 変化が無いときは同じ参照を返して再描画ループを避ける
+    const prune = <T,>(prev: Record<string, T>): Record<string, T> => {
+      if (!justEmptied.some((id) => id in prev)) return prev
+      const next = { ...prev }
+      justEmptied.forEach((id) => delete next[id])
+      return next
+    }
+    setCustomerNames(prune)
+    setHappyHourByBlock(prune)
+    setNewCustomerByBlock(prune)
+  }, [blocks])
   const [linkMode, setLinkMode] = useState(false)
   const [linkSelection, setLinkSelection] = useState<string[]>([])
   const [moveMode, setMoveMode] = useState(false)
