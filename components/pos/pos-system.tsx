@@ -36,6 +36,13 @@ import { supabase } from "@/lib/supabase"
 import { fetchProducts, createProduct, updateProduct, deleteProduct, updateProductOrders } from "@/lib/api/products"
 import { fetchBlocks, upsertBlocks, syncBlocks } from "@/lib/api/blocks"
 import { fetchSessions, upsertSessions } from "@/lib/api/sessions"
+import {
+  stripGuestInfo,
+  hasGuestInfo,
+  resolveBussingTargets,
+  findOrphanSessions,
+  findJustEmptiedBlockIds,
+} from "@/lib/seat-occupancy"
 import { changedOrders } from "@/lib/product-order"
 import { fetchPayments, upsertPayments, cancelPaymentDb } from "@/lib/api/payments-db"
 import { fetchSettings, upsertSettings } from "@/lib/api/settings-db"
@@ -59,19 +66,6 @@ import { LayoutGrid, Edit3, BarChart3, UtensilsCrossed, RefreshCw, Link2, ArrowR
 
 type Tab = "map" | "editor" | "report"
 
-// 下膳（空席化）時に持ち越してはいけない接客情報を落とす。
-// 会計時の顧客名は payments 側へ別途コピー済みのため、売上履歴には影響しない。
-const stripGuestInfo = (s: BlockSession): BlockSession => ({
-  ...s,
-  customerName: undefined,
-  note: undefined,
-  // happy_hour / is_new_customer は NOT NULL 相当で常に boolean が返るため、
-  // undefined ではなく false に揃える
-  happyHour: false,
-  isNewCustomer: false,
-})
-const hasGuestInfo = (s: BlockSession) =>
-  !!s.customerName || !!s.note || !!s.happyHour || !!s.isNewCustomer
 
 export function POSSystem({ storeId }: { storeId: number }) {
   const [activeTab, setActiveTab] = useState<Tab>("map")
@@ -133,13 +127,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
       // 席を開くまで残り続け、次の客に顧客名・HH・入店時間が引き継がれてしまうため。
       // 未会計のオーダーが残っているものは席のステータス側が壊れている可能性があるので触らない。
       if (dbSessions !== null && dbBlocks !== null && !staleForLocalWrites) {
-        const statusById = new Map(dbBlocks.map((b) => [b.id, b.status]))
-        const orphans = dbSessions.filter(
-          (s) =>
-            !s.endedAt &&
-            statusById.get(s.blockId) === "empty" &&
-            !s.orderItems.some((i) => !i.isPaid),
-        )
+        const orphans = findOrphanSessions(dbSessions, dbBlocks)
         if (orphans.length > 0) {
           const sweptAt = new Date()
           const swept = orphans.map((s) => stripGuestInfo({ ...s, endedAt: sweptAt }))
@@ -307,10 +295,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
   // 非空席から空席へ変化した席だけを対象にする。
   const prevBlockStatusRef = useRef<Record<string, ServiceBlock["status"]>>({})
   useEffect(() => {
-    const prevStatus = prevBlockStatusRef.current
-    const justEmptied = blocks
-      .filter((b) => b.status === "empty" && prevStatus[b.id] && prevStatus[b.id] !== "empty")
-      .map((b) => b.id)
+    const justEmptied = findJustEmptiedBlockIds(prevBlockStatusRef.current, blocks)
     prevBlockStatusRef.current = Object.fromEntries(blocks.map((b) => [b.id, b.status]))
     if (justEmptied.length === 0) return
     // 変化が無いときは同じ参照を返して再描画ループを避ける
@@ -434,39 +419,12 @@ export function POSSystem({ storeId }: { storeId: number }) {
 
   const bussingById = useCallback((blockId: string) => {
     const now = new Date()
-    // この席に関係するセッションを集める（同一blockIdのセッションは過去分含め複数存在する）
-    const related = sessions.filter(
-      (s) => s.blockId === blockId || (s.linkedBlockIds ?? []).includes(blockId),
+    // 対象席と掃除するセッションの判定は lib/seat-occupancy 側でテスト済み
+    const { blockIds: allBlockIds, sessionsToClean: toClean } = resolveBussingTargets(
+      sessions,
+      blocks,
+      blockId,
     )
-    // endedAt なしのゴーストセッション（DB 未同期の古いセッション対策）。
-    // 複数残っていることがあるため find ではなく全件を対象にする。
-    const ghostSessions = related.filter((s) => !s.endedAt)
-    const latestEnded = related
-      .filter((s) => s.endedAt)
-      .sort((a, b) => b.endedAt!.getTime() - a.endedAt!.getTime())[0]
-
-    // 現在の連結構成はアクティブなセッションが持つため、あればそちらを優先する。
-    const linkedFromGhosts = ghostSessions.flatMap((s) => [s.blockId, ...(s.linkedBlockIds ?? [])])
-    // アクティブ側に連結情報が無いときは、直前に会計されたグループの構成で補う。
-    // ただし終了済みセッションは前の組の連結情報であることがあり、別の組を巻き込んで
-    // 空席化しかねないため、まだ会計済み(checked_out)のままの席だけを対象にする。
-    const blockStatusById = new Map(blocks.map((b) => [b.id, b.status]))
-    const linkedFromEnded =
-      latestEnded && !ghostSessions.some((s) => s.linkedBlockIds?.length)
-        ? [latestEnded.blockId, ...(latestEnded.linkedBlockIds ?? [])].filter(
-            (id) => id === blockId || blockStatusById.get(id) === "checked_out",
-          )
-        : []
-    const allBlockIds = Array.from(
-      new Set([blockId, ...linkedFromGhosts, ...linkedFromEnded]),
-    )
-
-    // ゴーストは終了させ、終了済みセッションからも接客情報を落とす。
-    // endedAt の同期に失敗した場合でも、次の客に顧客名・備考・HH が復活しないようにする。
-    const toClean = [
-      ...ghostSessions,
-      ...(latestEnded && hasGuestInfo(latestEnded) ? [latestEnded] : []),
-    ]
     if (toClean.length > 0) {
       const cleaned = toClean.map((s) => stripGuestInfo({ ...s, endedAt: s.endedAt ?? now }))
       const cleanedById = new Map(cleaned.map((s) => [s.id, s]))
