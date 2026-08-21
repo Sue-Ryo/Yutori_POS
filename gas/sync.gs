@@ -3,43 +3,80 @@
 // SUPABASE_SERVICE_KEY : Supabase の service_role キー（RLS バイパス用）
 // GAS_SECRET           : POS との共有シークレット（任意の文字列）
 // DRIVE_FOLDER_ID      : スプレッドシートを置く Google Drive フォルダの ID
-// STORE_ID             : この GAS が担当する店舗の ID（stores.id。例: 1 = 目黒店）
-// STORE_LATITUDE       : 店舗の緯度（例: 35.6895）
-// STORE_LONGITUDE      : 店舗の経度（例: 139.6917）
+//
+// ── 任意（未設定でも動く） ──────────────────────────────────────────
+// STORE_IDS            : 対象店舗を絞る場合のみ。カンマ区切り（例: "1,4,5"）
+//                        未設定なら stores テーブルの全店舗が対象
+// STORE_COORDS_JSON    : 天気APIに使う店舗座標の上書き
+//                        例: {"1":{"lat":"35.6339","lng":"139.7160"}}
+//
+// この GAS ひとつで全店舗を処理し、1つのスプレッドシート
+// 「<年>年 会計」の中に店舗名のシートを1枚ずつ作って書き分ける。
 
 const PROPS = PropertiesService.getScriptProperties()
 const SUPABASE_URL = PROPS.getProperty('SUPABASE_URL')
 const SUPABASE_SERVICE_KEY = PROPS.getProperty('SUPABASE_SERVICE_KEY')
 const GAS_SECRET = PROPS.getProperty('GAS_SECRET')
 const DRIVE_FOLDER_ID = PROPS.getProperty('DRIVE_FOLDER_ID')
-const STORE_ID = PROPS.getProperty('STORE_ID') || '1'
 
 const DAYS_JA = ['日', '月', '火', '水', '木', '金', '土']
 const HEADERS = ['日付', '曜日（祝日）', '天気', '来客数', '組数', '新規来客数', '新規組数', '売上', '現金', 'キャッシュレス', '割引', '経費', '経費枚数', '利益']
 const WEATHER_COL = 3  // 天気は3列目（1-indexed）
 
+// 天気APIに渡す店舗座標。STORE_COORDS_JSON で上書きできる
+const DEFAULT_STORE_COORDS = {
+  '1': { lat: '35.6339', lng: '139.7160' },  // 目黒店
+  '4': { lat: '35.7778', lng: '139.7208' },  // 赤羽店
+  '5': { lat: '35.6553', lng: '139.7570' },  // 浜松町店
+}
+const FALLBACK_COORDS = { lat: '35.6895', lng: '139.6917' }  // 座標未登録の店舗用
+
+// stores が引けなかったときの保険。ここが使われるのは異常時のみ
+const FALLBACK_STORES = [
+  { id: '1', name: '目黒店' },
+  { id: '4', name: '赤羽店' },
+  { id: '5', name: '浜松町店' },
+]
+
+// 1店舗運用だった頃のシート名。初回だけ店舗名シートへ引き継ぐ
+const LEGACY_SHEET_NAME = '会計'
+const LEGACY_STORE_ID = '1'
+
 // ── タイマートリガーから呼ばれる ──────────────────────────────────────
 function syncFromSupabase() {
-  var now = new Date()
-  var year = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy')
-
-  var unsynced = fetchUnsyncedPayments()
-
-  // 先にシートを再構築し、成功してから同期済みにする
-  rebuildAnnualSheet(year)
-
-  // 年が替わった直後（1/1〜7）は前年シートも更新
-  if (now.getMonth() === 0 && now.getDate() <= 7) {
-    rebuildAnnualSheet(String(parseInt(year, 10) - 1))
+  var lock = LockService.getScriptLock()
+  if (!lock.tryLock(5 * 60 * 1000)) {
+    Logger.log('[sync] 別の実行が進行中のためスキップ')
+    return
   }
+  try {
+    var now = new Date()
+    var year = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy')
 
-  if (unsynced.length > 0) {
-    markSynced(unsynced.map(function(p) { return p.id }))
+    var unsynced = fetchUnsyncedPayments()
+
+    // 先にシートを再構築し、成功してから同期済みにする
+    rebuildAllSheets(year)
+
+    // 年が替わった直後（1/1〜7）は前年シートも更新
+    if (now.getMonth() === 0 && now.getDate() <= 7) {
+      rebuildAllSheets(String(parseInt(year, 10) - 1))
+    }
+
+    if (unsynced.length > 0) {
+      markSynced(unsynced.map(function(p) { return p.id }))
+    }
+  } finally {
+    lock.releaseLock()
   }
 }
 
 // ── POS の手動ボタンから HTTP POST で呼ばれる ────────────────────────
 function doPost(e) {
+  var lock = LockService.getScriptLock()
+  if (!lock.tryLock(5 * 60 * 1000)) {
+    return respond({ error: '別の同期が実行中です。少し待ってからもう一度お試しください' })
+  }
   try {
     var body = JSON.parse(e.postData.contents)
     if (body.secret !== GAS_SECRET) return respond({ error: 'Unauthorized' })
@@ -49,14 +86,22 @@ function doPost(e) {
       .filter(function(p) { return !p.canceledAt && !p.canceled_at })
       .map(function(p) { return p.id })
 
+    // 送信元の店舗だけを再構築する（未指定なら全店舗）
+    var only = null
+    if (body.storeIds && body.storeIds.length > 0) {
+      only = body.storeIds.map(String)
+    } else if (body.storeId !== undefined && body.storeId !== null) {
+      only = [String(body.storeId)]
+    }
+
     // 先にシートを再構築し、成功してから同期済みにする
     // （途中失敗時に payments が「同期済み」で固定化して欠落するのを防ぐ）
     var now = new Date()
     var year = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy')
-    rebuildAnnualSheet(year)
+    rebuildAllSheets(year, only)
 
     if (now.getMonth() === 0 && now.getDate() <= 7) {
-      rebuildAnnualSheet(String(parseInt(year, 10) - 1))
+      rebuildAllSheets(String(parseInt(year, 10) - 1), only)
     }
 
     if (syncedIds.length > 0) markSynced(syncedIds)
@@ -64,32 +109,79 @@ function doPost(e) {
     return respond({ syncedIds: syncedIds })
   } catch (err) {
     return respond({ error: err.toString() })
+  } finally {
+    lock.releaseLock()
   }
 }
 
-// ── 来客数・組数の集計 ───────────────────────────────────────────────
-// 個別会計で会計が複数回に分かれても、1組・1回ぶんの人数として数える
-function countBySession(payments) {
-  var guestsBySession = {}
-  payments.forEach(function(p) {
-    var sid = p.session_id
-    var guests = p.guest_count || 0
-    if (guestsBySession[sid] === undefined || guestsBySession[sid] < guests) {
-      guestsBySession[sid] = guests
+// ── 対象店舗の一覧（Supabase の stores が正） ────────────────────────
+// 店舗を増やしたら stores に足すだけでシートが1枚増える
+function getStores() {
+  var stores = fetchStores()
+  if (stores.length === 0) {
+    Logger.log('[stores] 取得できなかったため既定リストを使用')
+    stores = FALLBACK_STORES
+  }
+
+  var only = PROPS.getProperty('STORE_IDS')
+  if (only) {
+    var allow = only.split(',').map(function(s) { return s.trim() })
+    stores = stores.filter(function(s) { return allow.indexOf(s.id) !== -1 })
+  }
+
+  var coords = {}
+  Object.keys(DEFAULT_STORE_COORDS).forEach(function(k) { coords[k] = DEFAULT_STORE_COORDS[k] })
+  var override = PROPS.getProperty('STORE_COORDS_JSON')
+  if (override) {
+    try {
+      var parsed = JSON.parse(override)
+      Object.keys(parsed).forEach(function(k) { coords[k] = parsed[k] })
+    } catch (err) {
+      Logger.log('[stores] STORE_COORDS_JSON が不正です: %s', err)
+    }
+  }
+
+  return stores.map(function(s) {
+    var c = coords[s.id] || FALLBACK_COORDS
+    return { id: s.id, name: s.name, lat: String(c.lat), lng: String(c.lng) }
+  })
+}
+
+// ── 全店舗ぶんのシートを再構築（1スプレッドシート＝1年） ─────────────
+function rebuildAllSheets(year, onlyStoreIds) {
+  var stores = getStores()
+  if (onlyStoreIds) {
+    stores = stores.filter(function(s) { return onlyStoreIds.indexOf(s.id) !== -1 })
+  }
+  if (stores.length === 0) {
+    Logger.log('[rebuild] 対象店舗なし')
+    return
+  }
+
+  var ss = getOrCreateSpreadsheet(year)
+  Logger.log('[rebuild] year=%s 書き込み先 spreadsheet="%s" url=%s', year, ss.getName(), ss.getUrl())
+
+  // 祝日はカレンダーAPIを日ごとに叩くと店舗数ぶん遅くなるため、年に1回まとめて引く
+  var holidays = fetchHolidayMap(year)
+
+  stores.forEach(function(store) {
+    try {
+      rebuildStoreSheet(ss, year, store, holidays)
+    } catch (err) {
+      // 1店舗が失敗しても他店舗は書き切る
+      Logger.log('[rebuild] %s で失敗: %s', store.name, err)
     }
   })
-  var sids = Object.keys(guestsBySession)
-  return {
-    groups: sids.length,
-    guests: sids.reduce(function(s, sid) { return s + guestsBySession[sid] }, 0),
-  }
 }
 
-// ── 年次シートを全再構築（1シートで1年分） ────────────────────────────
-function rebuildAnnualSheet(year) {
-  var allPayments = fetchPaymentsForYear(year)
-  var expenseList = fetchExpensesForYear(year)
-  Logger.log('[rebuild] year=%s payments=%s expenses=%s', year, allPayments.length, expenseList.length)
+// ── 1店舗ぶんのシートを全再構築 ──────────────────────────────────────
+function rebuildStoreSheet(ss, year, store, holidays) {
+  // データが0件でもシート自体は作る（開店前の店舗のタブを用意しておく）
+  var sheet = getOrCreateSheet(ss, store)
+
+  var allPayments = fetchPaymentsForYear(year, store.id)
+  var expenseList = fetchExpensesForYear(year, store.id)
+  Logger.log('[rebuild] %s year=%s payments=%s expenses=%s', store.name, year, allPayments.length, expenseList.length)
 
   var expenseMap = {}
   expenseList.forEach(function(e) { expenseMap[e.business_date] = e })
@@ -102,17 +194,13 @@ function rebuildAnnualSheet(year) {
     if (allDates.indexOf(d) === -1) allDates.push(d)
   })
   if (allDates.length === 0) {
-    Logger.log('[rebuild] 対象日なし → 書き込みスキップ')
+    Logger.log('[rebuild] %s 対象日なし → 書き込みスキップ', store.name)
     return
   }
   allDates.sort()
 
-  var ss = getOrCreateSpreadsheet(year + '-01')
-  var sheet = getOrCreateSheet(ss, '会計')
-  Logger.log('[rebuild] 書き込み先 spreadsheet="%s" id=%s url=%s', ss.getName(), ss.getId(), ss.getUrl())
-
   // 天気をAPIで取得し、直近5日分はシートの既存入力をフォールバックとして使う
-  var weatherFromApi = fetchWeatherForYear(year)
+  var weatherFromApi = fetchWeatherForYear(year, store.lat, store.lng)
   var weatherFromSheet = readExistingWeather(sheet)
 
   // データ行をクリアして再構築。
@@ -144,7 +232,7 @@ function rebuildAnnualSheet(year) {
 
     allRows.push([
       dateStr,
-      getDayStr(date),
+      getDayStr(date, holidays),
       weather,
       all.guests,
       all.groups,
@@ -162,7 +250,25 @@ function rebuildAnnualSheet(year) {
   var maxRows = sheet.getMaxRows()
   if (maxRows < neededRows) sheet.insertRowsAfter(maxRows, neededRows - maxRows)
   sheet.getRange(2, 1, allRows.length, HEADERS.length).setValues(allRows)
-  Logger.log('[rebuild] %s 行を書き込み完了', allRows.length)
+  Logger.log('[rebuild] %s に %s 行を書き込み完了', store.name, allRows.length)
+}
+
+// ── 来客数・組数の集計 ───────────────────────────────────────────────
+// 個別会計で会計が複数回に分かれても、1組・1回ぶんの人数として数える
+function countBySession(payments) {
+  var guestsBySession = {}
+  payments.forEach(function(p) {
+    var sid = p.session_id
+    var guests = p.guest_count || 0
+    if (guestsBySession[sid] === undefined || guestsBySession[sid] < guests) {
+      guestsBySession[sid] = guests
+    }
+  })
+  var sids = Object.keys(guestsBySession)
+  return {
+    groups: sids.length,
+    guests: sids.reduce(function(s, sid) { return s + guestsBySession[sid] }, 0),
+  }
 }
 
 // ── 既存シートから天気データを読み取る（日付→天気のマップ） ──────────
@@ -180,9 +286,8 @@ function readExistingWeather(sheet) {
   return map
 }
 
-// ── スプレッドシート取得 or 作成（年次単位） ─────────────────────────
-function getOrCreateSpreadsheet(yearMonth) {
-  var year  = yearMonth.slice(0, 4)
+// ── スプレッドシート取得 or 作成（年次単位・全店舗で共有） ───────────
+function getOrCreateSpreadsheet(year) {
   var title = year + '年 会計'
   var folder = DriveApp.getFolderById(DRIVE_FOLDER_ID)
   var files = folder.getFilesByName(title)
@@ -192,9 +297,22 @@ function getOrCreateSpreadsheet(yearMonth) {
   return ss
 }
 
-// ── シート取得 or 作成（ヘッダー行を常に最新化） ─────────────────────
-function getOrCreateSheet(ss, title) {
+// ── 店舗シート取得 or 作成（ヘッダー行を常に最新化） ─────────────────
+function getOrCreateSheet(ss, store) {
+  var title = store.name
   var sheet = ss.getSheetByName(title)
+
+  // 1店舗運用だった頃の「会計」シートは目黒店シートとして引き継ぐ
+  // （手入力した天気を捨てずに済む）
+  if (!sheet && store.id === LEGACY_STORE_ID) {
+    var legacy = ss.getSheetByName(LEGACY_SHEET_NAME)
+    if (legacy) {
+      legacy.setName(title)
+      sheet = legacy
+      Logger.log('[sheet] "%s" を "%s" にリネームしました', LEGACY_SHEET_NAME, title)
+    }
+  }
+
   if (!sheet) {
     sheet = ss.insertSheet(title)
     sheet.setFrozenRows(1)
@@ -210,6 +328,19 @@ function getOrCreateSheet(ss, title) {
   headerRange.setBackground('#4a86e8')
   headerRange.setFontColor('#ffffff')
   return sheet
+}
+
+// ── 診断用: 対象店舗と書き込み先をログ出力（手動実行） ───────────────
+function debugStores() {
+  var stores = getStores()
+  Logger.log('[debug] 対象店舗数=%s', stores.length)
+  stores.forEach(function(s) {
+    Logger.log('[debug] id=%s name="%s" lat=%s lng=%s', s.id, s.name, s.lat, s.lng)
+  })
+  var year = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy')
+  var ss = getOrCreateSpreadsheet(year)
+  Logger.log('[debug] spreadsheet="%s" url=%s', ss.getName(), ss.getUrl())
+  Logger.log('[debug] 既存シート: %s', ss.getSheets().map(function(sh) { return sh.getName() }).join(', '))
 }
 
 // ── 診断用: payments を無条件で数件取得してログ出力（手動実行） ──────
@@ -230,36 +361,14 @@ function debugPayments() {
   }
   Logger.log('[debug] 直近payments件数=%s', data.length)
   data.forEach(function(p, i) {
-    Logger.log('[debug] #%s id=%s business_date="%s" canceled_at=%s total=%s',
-      i, p.id, p.business_date, p.canceled_at, p.total_amount)
+    Logger.log('[debug] #%s id=%s store_id=%s business_date="%s" canceled_at=%s total=%s',
+      i, p.id, p.store_id, p.business_date, p.canceled_at, p.total_amount)
   })
 }
 
-// ── Supabase: 未同期 payments 取得 ───────────────────────────────────
-function fetchUnsyncedPayments() {
-  var res = UrlFetchApp.fetch(
-    SUPABASE_URL + '/rest/v1/payments?store_id=eq.' + STORE_ID + '&synced_to_sheet_at=is.null&canceled_at=is.null&order=payment_datetime.asc',
-    {
-      headers: {
-        'apikey': SUPABASE_SERVICE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_SERVICE_KEY,
-      },
-      muteHttpExceptions: true,
-    }
-  )
-  var data = JSON.parse(res.getContentText())
-  return Array.isArray(data) ? data : []
-}
-
-// ── Supabase: 指定年の全 payments 取得 ──────────────────────────────
-function fetchPaymentsForYear(year) {
-  var url = SUPABASE_URL + '/rest/v1/payments'
-    + '?store_id=eq.' + STORE_ID
-    + '&business_date=gte.' + year + '-01-01'
-    + '&business_date=lte.' + year + '-12-31'
-    + '&canceled_at=is.null'
-    + '&order=business_date.asc,payment_datetime.asc'
-  var res = UrlFetchApp.fetch(url, {
+// ── Supabase 共通 ────────────────────────────────────────────────────
+function supabaseGet(path) {
+  var res = UrlFetchApp.fetch(SUPABASE_URL + '/rest/v1/' + path, {
     headers: {
       'apikey': SUPABASE_SERVICE_KEY,
       'Authorization': 'Bearer ' + SUPABASE_SERVICE_KEY,
@@ -268,27 +377,40 @@ function fetchPaymentsForYear(year) {
   })
   var data = JSON.parse(res.getContentText())
   if (!Array.isArray(data)) {
-    Logger.log('[payments取得エラー] status=%s body=%s', res.getResponseCode(), res.getContentText())
+    Logger.log('[supabase取得エラー] path=%s status=%s body=%s', path, res.getResponseCode(), res.getContentText().slice(0, 300))
     return []
   }
   return data
 }
 
-// ── Supabase: 指定年の daily_expenses 取得 ──────────────────────────
-function fetchExpensesForYear(year) {
-  var url = SUPABASE_URL + '/rest/v1/daily_expenses'
-    + '?store_id=eq.' + STORE_ID
+// ── Supabase: 店舗一覧 ───────────────────────────────────────────────
+function fetchStores() {
+  return supabaseGet('stores?select=id,name&order=id.asc').map(function(s) {
+    return { id: String(s.id), name: s.name }
+  })
+}
+
+// ── Supabase: 未同期 payments 取得（全店舗ぶん） ─────────────────────
+function fetchUnsyncedPayments() {
+  return supabaseGet('payments?synced_to_sheet_at=is.null&canceled_at=is.null&order=payment_datetime.asc')
+}
+
+// ── Supabase: 指定年・指定店舗の全 payments 取得 ─────────────────────
+function fetchPaymentsForYear(year, storeId) {
+  return supabaseGet('payments'
+    + '?store_id=eq.' + storeId
     + '&business_date=gte.' + year + '-01-01'
     + '&business_date=lte.' + year + '-12-31'
-  var res = UrlFetchApp.fetch(url, {
-    headers: {
-      'apikey': SUPABASE_SERVICE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_SERVICE_KEY,
-    },
-    muteHttpExceptions: true,
-  })
-  var data = JSON.parse(res.getContentText())
-  return Array.isArray(data) ? data : []
+    + '&canceled_at=is.null'
+    + '&order=business_date.asc,payment_datetime.asc')
+}
+
+// ── Supabase: 指定年・指定店舗の daily_expenses 取得 ─────────────────
+function fetchExpensesForYear(year, storeId) {
+  return supabaseGet('daily_expenses'
+    + '?store_id=eq.' + storeId
+    + '&business_date=gte.' + year + '-01-01'
+    + '&business_date=lte.' + year + '-12-31')
 }
 
 // ── Supabase: synced_to_sheet_at を更新 ──────────────────────────────
@@ -310,13 +432,10 @@ function markSynced(ids) {
   )
 }
 
-// ── Open-Meteo: 指定年の天気を取得（日付→天気文字列のマップ） ────────
+// ── Open-Meteo: 指定年・指定座標の天気を取得（日付→天気文字列のマップ） ──
 // アーカイブAPIは約5日前までしか持たないため、
 // 直近分（過去7日+今日）は予報APIの past_days で補完する
-function fetchWeatherForYear(year) {
-  var lat = PROPS.getProperty('STORE_LATITUDE') || '35.6895'
-  var lng = PROPS.getProperty('STORE_LONGITUDE') || '139.6917'
-
+function fetchWeatherForYear(year, lat, lng) {
   var result = {}
 
   // 年初〜5日前: アーカイブAPI
@@ -359,16 +478,15 @@ function mergeWeatherFromApi(result, year, url) {
       Logger.log('[weather] APIエラー応答: %s', res.getContentText().slice(0, 200))
       return
     }
-    data.daily.time.forEach(function(date, i) {
-      if (date.slice(0, 4) !== String(year)) return  // 年またぎ分（1月頭のpast_days等）を除外
-      var code = data.daily.weathercode[i]
-      if (code === null || code === undefined) return
-      var d = new Date(date + 'T00:00:00')
+    data.daily.time.forEach(function(dateStr, i) {
+      if (dateStr.slice(0, 4) !== year) return
+      var d = new Date(dateStr + 'T00:00:00')
       var key = (d.getMonth() + 1) + '/' + d.getDate()
-      result[key] = wmoToJa(code)
+      var text = wmoToJa(data.daily.weathercode[i])
+      if (text) result[key] = text
     })
-  } catch (e) {
-    Logger.log('[weather] 取得失敗: %s', e)
+  } catch (err) {
+    Logger.log('[weather] 取得失敗: %s', err)
   }
 }
 
@@ -384,6 +502,26 @@ function wmoToJa(code) {
   if (code <= 82)           return 'にわか雨'
   if (code <= 99)           return '雷雨'
   return ''
+}
+
+// ── 祝日: 1年ぶんをまとめて取得（yyyy-MM-dd → true） ─────────────────
+// 日ごとに getEventsForDay を呼ぶと「店舗数 × 日数」ぶん通信が発生して
+// 実行時間の上限（6分）に当たるため、年に1回だけ引いて使い回す
+function fetchHolidayMap(year) {
+  var map = {}
+  try {
+    var cal = CalendarApp.getCalendarById('ja.japanese#holiday@group.v.calendar.google.com')
+    if (!cal) return map
+    var start = new Date(year + '-01-01T00:00:00+09:00')
+    var end = new Date((parseInt(year, 10) + 1) + '-01-01T00:00:00+09:00')
+    cal.getEvents(start, end).forEach(function(ev) {
+      map[Utilities.formatDate(ev.getStartTime(), 'Asia/Tokyo', 'yyyy-MM-dd')] = true
+    })
+    Logger.log('[holiday] %s年の祝日 %s 件', year, Object.keys(map).length)
+  } catch (err) {
+    Logger.log('[holiday] 取得失敗: %s', err)
+  }
+  return map
 }
 
 // ── ユーティリティ ───────────────────────────────────────────────────
@@ -402,15 +540,11 @@ function toDateStr(businessDate) {
   return (d.getMonth() + 1) + '/' + d.getDate()
 }
 
-// 曜日列: 曜日＋祝日判定（Google カレンダーの日本の祝日を参照）
-function getDayStr(businessDate) {
+// 曜日列: 曜日＋祝日判定（祝日マップは fetchHolidayMap 参照）
+function getDayStr(businessDate, holidays) {
   var d = new Date(businessDate + 'T00:00:00')
   var day = DAYS_JA[d.getDay()]
-  try {
-    var cal = CalendarApp.getCalendarById('ja.japanese#holiday@group.v.calendar.google.com')
-    var events = cal.getEventsForDay(d)
-    if (events.length > 0) return day + '（祝）'
-  } catch (e) {}
+  if (holidays && holidays[businessDate]) return day + '（祝）'
   return day
 }
 
