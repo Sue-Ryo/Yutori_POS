@@ -59,6 +59,7 @@ import {
   type PendingSquareCheckout,
 } from "@/lib/square-pos-link"
 import { loadSplitPlan, saveSplitPlan, clearSplitPlan } from "@/lib/split-checkout"
+import { broadcastPosChange, subscribePosChanges } from "@/lib/pos-broadcast"
 import { LayoutEditor } from "./layout-editor"
 import { AdminReport } from "./admin-report"
 import { Button } from "@/components/ui/button"
@@ -185,6 +186,14 @@ export function POSSystem({ storeId }: { storeId: number }) {
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 同じ店舗を開いている別タブが台帳を動かしたら追いつく。
+  // Square から戻ると別タブで開くことがあり、古いタブが会計前の伝票を持ったままだと
+  // 同じ会計をもう一度記録できてしまう
+  useEffect(() => {
+    return subscribePosChanges(storeId, () => loadAllFromDB())
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeId])
 
   // 他端末の変更をリアルタイム受信
   useEffect(() => {
@@ -559,9 +568,56 @@ export function POSSystem({ storeId }: { storeId: number }) {
           ? data.paidItemIds
           : session.orderItems.filter((i) => !i.isPaid).map((i) => i.id)
 
+      // 支払う明細が1件も残っていなければ会計を作らない。
+      // data の金額は会計操作を始めた時点のスナップショットなので、その間に別タブ
+      // （Squareから戻ると別タブで開くことがある）が同じ伝票を会計済みにしていると、
+      // 明細が1件も紐付かない同額の会計が台帳に増えてしまう。
+      const hasPayableItem = targetItemIds.some((id) =>
+        session.orderItems.some((i) => i.id === id && !i.isPaid)
+      )
+      if (!hasPayableItem) {
+        // 残しておくと復旧ダイアログが同じ会計を何度も勧めてくるため必ず捨てる
+        clearPendingSquareCheckout(storeId)
+        if (session.orderItems.every((i) => i.isPaid)) clearSplitPlan(storeId)
+        handleCloseSidebar()
+        alert(
+          `この伝票は既に会計済みです。¥${data.totalAmount.toLocaleString()} は記録していません。\n`
+          + "実際に二重で決済してしまった場合は、Squareアプリ側の取消も確認してください。"
+        )
+        return
+      }
+
+      // セッションの明細を支払済に更新（paymentId を紐付け）。
+      // 同じ商品をまとめた明細の一部だけを支払う場合は、支払い分と残り分に分割する。
+      // Payment より先に作るのは、支払い分に新しいIDが振られるため、この会計が
+      // 実際に受け持った明細IDが更新後の明細からしか分からないため。
+      const paymentId = `pay-${Date.now()}`
+      const paidQuantities = data.paidItemQuantities ?? {}
+      const updatedItems = session.orderItems.flatMap<OrderItem>((i) => {
+        if (i.isPaid || !targetItemIds.includes(i.id)) return [i]
+        const payQty = paidQuantities[i.id] ?? i.quantity
+        if (payQty <= 0) return [i]
+        if (payQty >= i.quantity) {
+          return [{ ...i, isPaid: true, paidAt: now, paymentId }]
+        }
+        const remainQty = i.quantity - payQty
+        return [
+          {
+            ...i,
+            id: `i-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            quantity: payQty,
+            subtotal: i.price * payQty,
+            isPaid: true,
+            paidAt: now,
+            paymentId,
+          },
+          { ...i, quantity: remainQty, subtotal: i.price * remainQty },
+        ]
+      })
+
       // Payment 作成
       const newPayment: Payment = {
-        id: `pay-${Date.now()}`,
+        id: paymentId,
         sessionId,
         blockId: session.blockId,
         paymentDatetime: now,
@@ -573,6 +629,9 @@ export function POSSystem({ storeId }: { storeId: number }) {
         cashAmount: data.cashAmount,
         cashlessAmount: data.cashlessAmount,
         guestCount: data.guestCount,
+        // この会計が受け持った明細。取消と会計履歴の内訳がこれを頼りにする。
+        // 伝票側の paymentId だけだと、取消で消えたあとは何を売ったか追えない
+        paidItemIds: updatedItems.filter((i) => i.paymentId === paymentId).map((i) => i.id),
         couponId: data.couponId,
         customerName: data.customerName,
         sessionStartedAt: session.startedAt,
@@ -582,36 +641,18 @@ export function POSSystem({ storeId }: { storeId: number }) {
         // 下膳で session.happyHour は落ちるため、会計時点の適用有無をここに残す
         happyHour: session.happyHour ?? false,
       }
+      // 会計が成立した時点で Square の保留は用済み。Square を経由しない会計
+      // （PayPay など）でも残さない。残っていると復旧ダイアログが会計済みの伝票に
+      // 対して同額の記録を勧めてしまう
+      clearPendingSquareCheckout(storeId)
+
       // Square復帰直後はDB再読込と競合しうるため、ローカル更新時刻を先に記録して
       // 古い fetch 結果が会計後の状態を上書きしないようにする
       lastLocalWriteRef.current = Date.now()
       setPayments((prev) => [newPayment, ...prev])
-      upsertPayments([newPayment], storeId).catch((e) => console.error("[DB]payments checkout:", e))
+      const paymentWrite = upsertPayments([newPayment], storeId)
+        .catch((e) => console.error("[DB]payments checkout:", e))
 
-      // セッションの明細を支払済に更新（paymentId を紐付け）。
-      // 同じ商品をまとめた明細の一部だけを支払う場合は、支払い分と残り分に分割する。
-      const paidQuantities = data.paidItemQuantities ?? {}
-      const updatedItems = session.orderItems.flatMap<OrderItem>((i) => {
-        if (i.isPaid || !targetItemIds.includes(i.id)) return [i]
-        const payQty = paidQuantities[i.id] ?? i.quantity
-        if (payQty <= 0) return [i]
-        if (payQty >= i.quantity) {
-          return [{ ...i, isPaid: true, paidAt: now, paymentId: newPayment.id }]
-        }
-        const remainQty = i.quantity - payQty
-        return [
-          {
-            ...i,
-            id: `i-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            quantity: payQty,
-            subtotal: i.price * payQty,
-            isPaid: true,
-            paidAt: now,
-            paymentId: newPayment.id,
-          },
-          { ...i, quantity: remainQty, subtotal: i.price * remainQty },
-        ]
-      })
       const allPaid = updatedItems.every((i) => i.isPaid)
       const updatedSession: BlockSession = {
         ...session,
@@ -621,7 +662,12 @@ export function POSSystem({ storeId }: { storeId: number }) {
       }
       setSessions((prev) => prev.map((s) => (s.id === sessionId ? updatedSession : s)))
       // sessions は書き戻し用の useEffect を持たないため直接同期する（endedAt 欠落防止）
-      upsertSessions([updatedSession], storeId).catch((e) => console.error("[DB]sessions checkout:", e))
+      const sessionWrite = upsertSessions([updatedSession], storeId)
+        .catch((e) => console.error("[DB]sessions checkout:", e))
+
+      // 会計済みになったことを他タブへ知らせる。書き終える前に知らせると、
+      // 受け取ったタブが会計前の行を読んでしまい古い画面のままになる
+      void Promise.allSettled([paymentWrite, sessionWrite]).then(() => broadcastPosChange(storeId))
 
       // プライマリ + 連結ブロック全て更新
       const allBlockIds = [session.blockId, ...(session.linkedBlockIds ?? [])]
@@ -707,6 +753,17 @@ export function POSSystem({ storeId }: { storeId: number }) {
     }
   }, [sessions, blocks])
 
+  // 保留会計を復旧ダイアログに出してよいか。
+  // 伝票が既に会計済みなら、別タブ（Squareから戻ると別タブで開くことがある）が
+  // 先に記録し終えた後なので、ここで記録すると同額の二重計上になる。黙って捨てる。
+  const isRecoverablePending = useCallback(
+    (pending: PendingSquareCheckout) => {
+      const target = sessions.find((s) => s.id === pending.sessionId)
+      return !!target && target.orderItems.some((i) => !i.isPaid)
+    },
+    [sessions],
+  )
+
   // Square POSアプリからの決済結果コールバック処理（モバイルWeb連携）
   const squareCallbackDoneRef = useRef(false)
   useEffect(() => {
@@ -722,10 +779,10 @@ export function POSSystem({ storeId }: { storeId: number }) {
       // コールバックが来ないまま戻ってきた会計が残っていないか確認する
       const stranded = loadPendingSquareCheckout(storeId)
       if (stranded) {
-        if (sessions.some((s) => s.id === stranded.sessionId)) {
+        if (isRecoverablePending(stranded)) {
           startSquareRecovery(stranded)
         } else {
-          // 伝票が既に無いなら復旧しようがないので保留を捨てる
+          // 伝票が既に無い／既に会計済みなら復旧しようがないので保留を捨てる
           clearPendingSquareCheckout(storeId)
         }
       }
@@ -796,7 +853,7 @@ export function POSSystem({ storeId }: { storeId: number }) {
       : result.transactionId
 
     handleCheckout(pending.sessionId, { ...pending.data, squarePaymentId })
-  }, [sessions, dbLoaded, handleCheckout, storeId, startSquareRecovery])
+  }, [sessions, dbLoaded, handleCheckout, storeId, startSquareRecovery, isRecoverablePending])
 
   // ページが再読込されずにタブへ戻る場合もあるため、表示に戻った時点でも拾う
   useEffect(() => {
@@ -806,13 +863,16 @@ export function POSSystem({ storeId }: { storeId: number }) {
       // コールバック付きで戻ってきた場合は上の処理に任せる
       if (parseSquareCallback(new URLSearchParams(window.location.search))) return
       const stranded = loadPendingSquareCheckout(storeId)
-      if (stranded && sessions.some((s) => s.id === stranded.sessionId)) {
+      if (!stranded) return
+      if (isRecoverablePending(stranded)) {
         startSquareRecovery(stranded)
+      } else {
+        clearPendingSquareCheckout(storeId)
       }
     }
     document.addEventListener("visibilitychange", handleVisible)
     return () => document.removeEventListener("visibilitychange", handleVisible)
-  }, [dbLoaded, squareRecovery, sessions, storeId, startSquareRecovery])
+  }, [dbLoaded, squareRecovery, storeId, startSquareRecovery, isRecoverablePending])
 
   // 決済できていた → 会計として記録する
   const handleRecoveryRecord = useCallback(() => {
@@ -862,10 +922,12 @@ export function POSSystem({ storeId }: { storeId: number }) {
       const now = new Date()
 
       // Payment に取消フラグ。台帳保護のため取消列だけを更新する
+      // 取消も伝票を書き換えるため、会計と同じく古い fetch 結果に上書きされないようにする
+      lastLocalWriteRef.current = Date.now()
       setPayments((prev) =>
         prev.map((p) => (p.id === paymentId ? { ...p, canceledAt: now } : p))
       )
-      cancelPaymentDb(paymentId, now).catch((e) => {
+      const cancelWrite = cancelPaymentDb(paymentId, now).catch((e) => {
         console.error("[DB]payments cancel:", e)
         setPayments((prev) => prev.map((p) => (p.id === paymentId ? payment : p)))
         setDbError("会計の取消に失敗しました（7日を過ぎた会計は取り消せません）")
@@ -875,6 +937,8 @@ export function POSSystem({ storeId }: { storeId: number }) {
       const cancelSession = sessions.find((s) => s.id === payment.sessionId)
       const isPaidByThisPayment = (i: { id: string; paymentId?: string }) =>
         i.paymentId === paymentId || payment.paidItemIds?.includes(i.id) === true
+      // 伝票が見つからない場合は書き込むものが無いので、そのまま解決済みとして扱う
+      let sessionWrite: Promise<unknown> = Promise.resolve()
 
       if (cancelSession) {
         const updatedCancelItems = cancelSession.orderItems.map((i) =>
@@ -883,8 +947,11 @@ export function POSSystem({ storeId }: { storeId: number }) {
             : i
         )
         const restoredSession = { ...cancelSession, orderItems: updatedCancelItems, endedAt: undefined }
-        upsertSessions([restoredSession], storeId).catch((e) => console.error("[DB]sessions cancel:", e))
+        sessionWrite = upsertSessions([restoredSession], storeId)
+          .catch((e) => console.error("[DB]sessions cancel:", e))
       }
+      // 取消で席が使用中に戻ったことを他タブへ知らせる
+      void Promise.allSettled([cancelWrite, sessionWrite]).then(() => broadcastPosChange(storeId))
       setSessions((prev) =>
         prev.map((s) => {
           if (s.id !== payment.sessionId) return s

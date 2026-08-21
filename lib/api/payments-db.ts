@@ -44,6 +44,10 @@ function paymentToRow(payment: Payment, storeId: number): Record<string, unknown
     cash_amount: payment.cashAmount,
     cashless_amount: payment.cashlessAmount,
     guest_count: payment.guestCount,
+    // 列追加前の会計は undefined。[] に丸めると台帳ガードが
+    // 「確定した会計の内容が変わった」と見なして同期状態の更新まで弾くため、
+    // 値が無いときは NULL のまま据え置く
+    paid_item_ids: payment.paidItemIds ?? null,
     note: payment.note ?? null,
     canceled_at: payment.canceledAt?.toISOString() ?? null,
     cancel_reason: payment.cancelReason ?? null,
