@@ -71,5 +71,12 @@
     "tw-animate-css": "1.3.3",
     "typescript": "5.7.3",
     "vitest": "^4.1.7"
-  }
+  },
+  "browserslist": [
+    "chrome >= 87",
+    "edge >= 88",
+    "firefox >= 78",
+    "safari >= 14",
+    "ios_saf >= 14"
+  ]
 }
