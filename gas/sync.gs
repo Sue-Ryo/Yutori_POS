@@ -21,7 +21,9 @@ const DRIVE_FOLDER_ID = PROPS.getProperty('DRIVE_FOLDER_ID')
 
 const DAYS_JA = ['日', '月', '火', '水', '木', '金', '土']
 const HEADERS = ['年', '月', '日', '曜日（祝日）', '天気', '来客数', '組数', '新規来客数', '新規組数', '粗利', '現金', 'キャッシュレス', '割引', '経費', '経費枚数', '利益']
-const WEATHER_COL = 5  // 天気は5列目（1-indexed）
+const DATE_COL = 1       // 年・月・日は1〜3列目（1-indexed）
+const DATE_COL_COUNT = 3
+const WEATHER_COL = 5    // 天気は5列目（1-indexed）
 // 日付が1列（M/D）だった頃のレイアウト。既存シートの天気を引き継ぐときだけ使う
 const LEGACY_WEATHER_COL = 3
 
@@ -254,6 +256,9 @@ function rebuildStoreSheet(ss, year, store, holidays) {
   var maxRows = sheet.getMaxRows()
   if (maxRows < neededRows) sheet.insertRowsAfter(maxRows, neededRows - maxRows)
   sheet.getRange(2, 1, allRows.length, HEADERS.length).setValues(allRows)
+  // clearContent() は書式を消さない。旧「日付」列に残った日付書式のまま
+  // 年(2026)を書くと 1905/7/18 と表示されるため、書式を明示的に戻す
+  sheet.getRange(2, DATE_COL, allRows.length, DATE_COL_COUNT).setNumberFormat('0')
   Logger.log('[rebuild] %s に %s 行を書き込み完了', store.name, allRows.length)
 }
 
@@ -285,9 +290,10 @@ function readExistingWeather(sheet) {
   data.forEach(function(row) {
     var key = null
     var weather = null
-    if (isYearCell(row[0])) {
+    var md = readMonthDay(row)
+    if (md) {
       // 現行レイアウト: 年 / 月 / 日 / 曜日 / 天気
-      key = Number(row[1]) + '/' + Number(row[2])
+      key = md.month + '/' + md.day
       weather = row[WEATHER_COL - 1]
     } else if (row[0]) {
       // 旧レイアウト（日付1列）: M/D / 曜日 / 天気
@@ -298,15 +304,25 @@ function readExistingWeather(sheet) {
       key = String(d)
       weather = row[LEGACY_WEATHER_COL - 1]
     }
-    if (key && weather) map[key] = weather
+    // 天気は必ず文字列。レイアウトを読み違えて数値を拾ったときは捨てる
+    if (key && typeof weather === 'string' && weather) map[key] = weather
   })
   return map
 }
 
-// 1列目が「年」かどうか。新旧レイアウトの判定に使う
-function isYearCell(value) {
-  var n = Number(value)
-  return !isNaN(n) && n >= 2000 && n <= 2200
+// 現行レイアウト（年/月/日）なら { month, day } を返す。旧レイアウトなら null。
+// 2列目・3列目が月日として妥当な数値かで判定する（旧レイアウトの2列目は曜日の文字列）。
+// 1列目は、日付書式が残っているシートでは年の数値ではなく Date として返るため
+// 「Date か、2000〜2200 の数値」の両方を許容する
+function readMonthDay(row) {
+  var month = Number(row[1])
+  var day = Number(row[2])
+  if (!(month >= 1 && month <= 12)) return null
+  if (!(day >= 1 && day <= 31)) return null
+  if (row[0] instanceof Date) return { month: month, day: day }
+  var year = Number(row[0])
+  if (year >= 2000 && year <= 2200) return { month: month, day: day }
+  return null
 }
 
 // ── スプレッドシート取得 or 作成（年次単位・全店舗で共有） ───────────
