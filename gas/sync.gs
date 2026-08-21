@@ -20,8 +20,10 @@ const GAS_SECRET = PROPS.getProperty('GAS_SECRET')
 const DRIVE_FOLDER_ID = PROPS.getProperty('DRIVE_FOLDER_ID')
 
 const DAYS_JA = ['日', '月', '火', '水', '木', '金', '土']
-const HEADERS = ['日付', '曜日（祝日）', '天気', '来客数', '組数', '新規来客数', '新規組数', '売上', '現金', 'キャッシュレス', '割引', '経費', '経費枚数', '利益']
-const WEATHER_COL = 3  // 天気は3列目（1-indexed）
+const HEADERS = ['年', '月', '日', '曜日（祝日）', '天気', '来客数', '組数', '新規来客数', '新規組数', '粗利', '現金', 'キャッシュレス', '割引', '経費', '経費枚数', '利益']
+const WEATHER_COL = 5  // 天気は5列目（1-indexed）
+// 日付が1列（M/D）だった頃のレイアウト。既存シートの天気を引き継ぐときだけ使う
+const LEGACY_WEATHER_COL = 3
 
 // 天気APIに渡す店舗座標。STORE_COORDS_JSON で上書きできる
 const DEFAULT_STORE_COORDS = {
@@ -229,9 +231,11 @@ function rebuildStoreSheet(ss, year, store, holidays) {
     var dateStr = toDateStr(date)
     // APIデータ優先、なければシートの既存値（直近で未取得の日）
     var weather = weatherFromApi[dateStr] || weatherFromSheet[dateStr] || ''
+    // business_date は 'yyyy-MM-dd'。数値で入れて集計・フィルタしやすくする
+    var ymd = date.split('-')
 
     allRows.push([
-      dateStr,
+      Number(ymd[0]), Number(ymd[1]), Number(ymd[2]),
       getDayStr(date, holidays),
       weather,
       all.guests,
@@ -275,15 +279,34 @@ function countBySession(payments) {
 function readExistingWeather(sheet) {
   var lastRow = sheet.getLastRow()
   if (lastRow <= 1) return {}
-  var data = sheet.getRange(2, 1, lastRow - 1, WEATHER_COL).getValues()
+  var width = Math.min(sheet.getMaxColumns(), WEATHER_COL)
+  var data = sheet.getRange(2, 1, lastRow - 1, width).getValues()
   var map = {}
   data.forEach(function(row) {
-    var key = row[0]
-    // Sheets が日付セルを Date 型で返す場合があるため M/D 文字列に正規化
-    if (key instanceof Date) key = (key.getMonth() + 1) + '/' + key.getDate()
-    if (key && row[2]) map[String(key)] = row[2]
+    var key = null
+    var weather = null
+    if (isYearCell(row[0])) {
+      // 現行レイアウト: 年 / 月 / 日 / 曜日 / 天気
+      key = Number(row[1]) + '/' + Number(row[2])
+      weather = row[WEATHER_COL - 1]
+    } else if (row[0]) {
+      // 旧レイアウト（日付1列）: M/D / 曜日 / 天気
+      // 列を分割した直後の1回だけここを通る。手入力した天気を捨てないための経過措置
+      var d = row[0]
+      // Sheets が日付セルを Date 型で返す場合があるため M/D 文字列に正規化
+      if (d instanceof Date) d = (d.getMonth() + 1) + '/' + d.getDate()
+      key = String(d)
+      weather = row[LEGACY_WEATHER_COL - 1]
+    }
+    if (key && weather) map[key] = weather
   })
   return map
+}
+
+// 1列目が「年」かどうか。新旧レイアウトの判定に使う
+function isYearCell(value) {
+  var n = Number(value)
+  return !isNaN(n) && n >= 2000 && n <= 2200
 }
 
 // ── スプレッドシート取得 or 作成（年次単位・全店舗で共有） ───────────
@@ -534,7 +557,7 @@ function groupBy(arr, keyFn) {
   }, {})
 }
 
-// 日付列: M/D 形式
+// 天気マップのキー: M/D 形式（シートの表示列ではなく内部キー）
 function toDateStr(businessDate) {
   var d = new Date(businessDate + 'T00:00:00')
   return (d.getMonth() + 1) + '/' + d.getDate()
